@@ -1,0 +1,47 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Web side of CF Recorder: the Mac app syncs each call folder here, and the
+  // viewer at askscottpierce.com/recordings reads it back from anywhere.
+  "name": "recordings",
+  "main": "src/server.ts",
+  "compatibility_date": "2026-09-22",
+  "observability": { "enabled": true },
+  // The last two are OAuth discovery. RFC 8414 and RFC 9728 put metadata at the domain
+  // root with the issuer's or resource's path appended, so these exact paths belong to
+  // this app and nothing else on askscottpierce.com (Tasks owns the bare well-known paths).
+  "routes": [
+    { "pattern": "askscottpierce.com/recordings", "zone_name": "askscottpierce.com" },
+    { "pattern": "askscottpierce.com/recordings/*", "zone_name": "askscottpierce.com" },
+    { "pattern": "askscottpierce.com/.well-known/oauth-authorization-server/recordings", "zone_name": "askscottpierce.com" },
+    { "pattern": "askscottpierce.com/.well-known/oauth-protected-resource/recordings/*", "zone_name": "askscottpierce.com" }
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "assets": {
+    "directory": "public",
+    "binding": "ASSETS",
+    // The viewer routes with #hash, so there's nothing to fall back to.
+    "not_found_handling": "none",
+    "run_worker_first": ["/recordings", "/recordings/api/*", "/recordings/oauth/*", "/.well-known/*"]
+  },
+  // Sign-in codes, sessions, guess limits, and the call index (migrations/).
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "recordings-auth",
+      "database_id": "8983324c-1f10-446f-aaac-fdb168a56c59",
+      "migrations_dir": "migrations"
+    }
+  ],
+  // Call files, stored as calls/<folder>/<file>.
+  "r2_buckets": [{ "binding": "FILES", "bucket_name": "recordings-files" }],
+  "send_email": [{ "name": "EMAIL" }],
+  // OAuth clients, grants, and tokens for the sync API (@cloudflare/workers-oauth-provider).
+  "kv_namespaces": [{ "binding": "OAUTH_KV", "id": "0eb9b7dd9a284c398bc8545bd95f9ffd" }],
+  "vars": {
+    // Sender for sign-in codes. The domain has to be set up for Cloudflare Email Sending.
+    "EMAIL_FROM": "hey@askscottpierce.com"
+  }
+  // Secret: ALLOWED_EMAILS, comma-separated emails or "@domain.com" rules for who may
+  // sign in. Empty lets nobody in. Set it with `npx wrangler secret put ALLOWED_EMAILS`.
+}

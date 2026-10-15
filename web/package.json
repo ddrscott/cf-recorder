@@ -1,0 +1,19 @@
+{
+  "name": "recordings",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev --port 8787 --host localhost:8787",
+    "deploy": "wrangler d1 migrations apply recordings-auth --remote && wrangler deploy",
+    "types": "wrangler types",
+    "check": "tsc --noEmit",
+    "test": "node test/e2e.mjs"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "wrangler": "^4.151.0"
+  },
+  "dependencies": {
+    "@cloudflare/workers-oauth-provider": "^1.2.3"
+  }
+}

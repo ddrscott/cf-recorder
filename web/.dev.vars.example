@@ -1,0 +1,3 @@
+# Copy to .dev.vars for wrangler dev. Never deploy these.
+DEV_LOGIN_CODES=1
+ALLOWED_EMAILS=dev@example.com
