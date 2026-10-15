@@ -42,6 +42,51 @@ enum NotesGenerator {
         """
     }
 
+    static let titleInstructions = """
+        Name this call in three to seven words, the way you'd label a folder: what it was \
+        about, like "Q3 pricing review" or "Laptop refresh vendor shortlist". Leave out the people on \
+        the call; every call has them. No date, no quotes, no trailing period. Reply \
+        with the title and nothing else.
+        """
+
+    /// A short title for the call, written from its finished notes (they're small, so
+    /// this is quick on either engine). Nil when the model has nothing usable.
+    static func title(
+        notes: String, engine: NotesEngine, ollamaHost: String, ollamaModel: String
+    ) async throws -> String? {
+        let prompt = "Meeting notes:\n\n\(notes)"
+        let raw: String
+        switch engine {
+        case .apple:
+            let session = LanguageModelSession(instructions: titleInstructions)
+            raw = try await session.respond(to: prompt).content
+        case .ollama:
+            guard let url = URL(string: ollamaHost.trimmingCharacters(in: .whitespaces) + "/api/chat") else { return nil }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.timeoutInterval = 120
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "model": ollamaModel,
+                "stream": false,
+                "options": ["temperature": 0.2],
+                "messages": [
+                    ["role": "system", "content": titleInstructions],
+                    ["role": "user", "content": prompt],
+                ],
+            ] as [String: Any])
+            let (data, _) = try await URLSession.shared.data(for: request)
+            let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+            raw = ((json?["message"] as? [String: Any])?["content"] as? String) ?? ""
+        }
+        let line = stripThinking(raw)
+            .split(separator: "\n").first { !$0.trimmingCharacters(in: .whitespaces).isEmpty }
+            .map(String.init) ?? ""
+        let title = line
+            .trimmingCharacters(in: CharacterSet(charactersIn: "#*_\"'`. ").union(.whitespaces))
+        return title.isEmpty || title.count > 80 ? nil : title
+    }
+
     /// Streams the notes in; `onText` gets the full text so far each time.
     static func generate(
         _ meeting: Meeting,

@@ -22,11 +22,38 @@ struct SettingsView: View {
     @State private var installedModels: [String] = []
 
     var body: some View {
+        TabView {
+            Tab("General", systemImage: "gearshape") { general }
+            Tab("Audio", systemImage: "waveform") { audio }
+            Tab("Notes", systemImage: "list.bullet.rectangle") { notes }
+            Tab("Sync", systemImage: "arrow.triangle.2.circlepath") { sync }
+        }
+        .frame(width: 480)
+        .onAppear { inputs = AudioDevices.inputs() }
+        .task(id: ollamaHost) { installedModels = await Self.ollamaModels(host: ollamaHost) }
+    }
+
+    private var general: some View {
         Form {
             Section("Names") {
                 TextField("Your name", text: $myName)
                 TextField("Default name for the other person", text: $theirName)
             }
+            Section {
+                LabeledContent("Recordings") {
+                    Button(MeetingStore.library.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) {
+                        try? FileManager.default.createDirectory(at: MeetingStore.library, withIntermediateDirectories: true)
+                        NSWorkspace.shared.open(MeetingStore.library)
+                    }
+                    .buttonStyle(.link)
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var audio: some View {
+        Form {
             Section {
                 Picker("Your mic", selection: $micDevice) {
                     Text("System Default").tag("")
@@ -41,7 +68,7 @@ struct SettingsView: View {
                 }
             } header: {
                 HStack {
-                    Text("Audio")
+                    Text("Devices")
                     Spacer()
                     Button("Refresh") { inputs = AudioDevices.inputs() }.buttonStyle(.link).font(.caption)
                 }
@@ -51,7 +78,13 @@ struct SettingsView: View {
                      : "Two input devices at once, like a second mic for someone in the room. Each side is transcribed on its own.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            Section("Notes") {
+        }
+        .formStyle(.grouped)
+    }
+
+    private var notes: some View {
+        Form {
+            Section {
                 Picker("Engine", selection: $engine) {
                     ForEach(NotesEngine.allCases) { Text($0.label).tag($0.rawValue) }
                 }
@@ -68,6 +101,12 @@ struct SettingsView: View {
                 Toggle("Refresh notes during the call", isOn: $liveNotes)
                 Toggle("Write notes when recording stops", isOn: $notesOnStop)
             }
+        }
+        .formStyle(.grouped)
+    }
+
+    private var sync: some View {
+        Form {
             Section {
                 if let session = SyncClient.session, model.syncConnected {
                     LabeledContent("Server", value: session.server)
@@ -91,26 +130,12 @@ struct SettingsView: View {
                         Text(syncMessage).font(Theme.mono(10)).foregroundStyle(.secondary).lineLimit(2)
                     }
                 }
-            } header: {
-                Text("Sync")
             } footer: {
                 Text("Any server that speaks the Recorder sync API works. You sign in once in your browser; the app keeps its token in the Keychain.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
-            Section {
-                LabeledContent("Recordings") {
-                    Button(MeetingStore.library.path.replacingOccurrences(of: NSHomeDirectory(), with: "~")) {
-                        try? FileManager.default.createDirectory(at: MeetingStore.library, withIntermediateDirectories: true)
-                        NSWorkspace.shared.open(MeetingStore.library)
-                    }
-                    .buttonStyle(.link)
-                }
-            }
         }
         .formStyle(.grouped)
-        .frame(width: 480)
-        .onAppear { inputs = AudioDevices.inputs() }
-        .task(id: ollamaHost) { installedModels = await Self.ollamaModels(host: ollamaHost) }
     }
 
     /// Listed devices, plus a remembered one that's unplugged so the picker can still show it.

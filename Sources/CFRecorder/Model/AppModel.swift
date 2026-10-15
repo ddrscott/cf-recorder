@@ -291,8 +291,18 @@ final class AppModel {
                     guard let self, self.folder == folder else { return }
                     self.meeting?.notes = text
                 }
+                guard self.folder == folder, let notes = meeting?.notes, !notes.isEmpty else { return }
+                // A title is nice to have; failing to get one shouldn't fail the notes.
+                if let title = try? await NotesGenerator.title(
+                    notes: notes, engine: engine,
+                    ollamaHost: Prefs.string(Prefs.ollamaHost),
+                    ollamaModel: Prefs.string(Prefs.ollamaModel)
+                ), self.folder == folder {
+                    meeting?.suggestTitle(title)
+                }
                 if self.folder == folder, let meeting {
                     MeetingStore.save(meeting, to: folder)
+                    refreshHistory()
                     syncSoon(after: 1)
                 }
             } catch {

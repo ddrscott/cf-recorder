@@ -33,7 +33,7 @@ On the first recording macOS asks for two permissions: **Microphone** and **Syst
 
 - **⌘R** starts and stops a recording, from the window or the menu bar icon.
 - Live, unfinished text shows as a dashed bubble with an orange `$`; it firms up when the recognizer finalizes the phrase.
-- Type a title and the other person's name in the header. Both are saved with the call.
+- Type a title and the other person's name in the header. Both are saved with the call. Each time notes are written, the call gets a short title from them, unless you've typed your own.
 - Notes refresh about every 90 seconds during the call and once more when you stop. Click a checkbox to tick off an action item; the change saves to `notes.md`.
 
 Settings (⌘,) holds your name, the default name for the other person, the notes engine, the Ollama host and model, audio devices, and sync.
@@ -72,19 +72,22 @@ cfr="/Applications/Recorder.app/Contents/MacOS/CFRecorder"
 "$cfr" transcribe call.m4a > call.txt     # [mm:ss] text, one line per phrase
 "$cfr" notes < transcript.md > notes.md   # uses the engine from Settings
 "$cfr" notes --apple < transcript.md      # force Apple Intelligence
+"$cfr" title < notes.md                   # a 3-7 word title, the one the app gives the call
 "$cfr" devices                            # input devices, uid<TAB>name
+open -n -W -a Recorder --args miccheck 8 [uid] --out /tmp/mic.txt   # buffers and peak per second, mic and desktop
+open -n -W -a Recorder --args miccheck 15 --save /tmp/call --out /tmp/mic.txt   # plus m4a files and transcript
 "$cfr" sync connect [url]                 # sign in through the browser
 "$cfr" sync                               # push every call; one line per call
 "$cfr" sync status | disconnect
 ```
 
-`transcribe` runs the same pipeline the app uses, which makes it the quickest smoke test after a change.
+`transcribe` runs the same pipeline the app uses, which makes it the quickest smoke test after a change. `miccheck` opens the mic and the desktop tap the way a call does. Run it through `open` so macOS checks Recorder's mic permission; launched from a terminal it gets the terminal's, and without that permission the mic reads as pure zeros.
 
 ## How it works
 
 | Piece | File | Notes |
 |---|---|---|
-| Mic capture | `Audio/SystemAudioCapture.swift` (`MicCapture`) | `AVAudioEngine` tap on the default input. |
+| Mic capture | `Audio/SystemAudioCapture.swift` (`MicCapture`) | `AVAudioEngine` tap on the default input, rebuilt on every config change. |
 | System audio | `Audio/SystemAudioCapture.swift` | Core Audio process tap (`CATapDescription`, global, excluding this app) on a private aggregate device. No Screen Recording permission. |
 | Per-stream pipeline | `Transcription/StreamTranscriber.swift` | Writes the m4a, converts to the recognizer's format, feeds `SpeechAnalyzer` + `SpeechTranscriber` with volatile results on. |
 | Timeline | same | Each stream records its first buffer's offset from the session start, so both sides land on one clock and sort correctly. |
@@ -101,4 +104,7 @@ cfr="/Applications/Recorder.app/Contents/MacOS/CFRecorder"
 
 - **Reserve the locale before downloading the speech model.** `AssetInventory.assetInstallationRequest(...).downloadAndInstall()` fails with a bare `_GenericObjCError 0` unless `AssetInventory.reserve(locale:)` ran first.
 - **`AVAudioFile.read` throws at end of file** instead of returning zero frames. Loop on `framePosition < length`.
+- **Bluetooth headsets stop `AVAudioEngine`.** Opening a headset's mic flips it from A2DP to the hands-free profile, and pinning any device reconfigures the engine too. The engine posts `AVAudioEngineConfigurationChange`, stops, and stays stopped, so the mic delivers nothing for the whole call. `MicCapture` restarts on every config change, and `StreamTranscriber` converts later buffers to the m4a's first format when the rate changes.
+- **The tap's format lies about its sample rate.** `kAudioTapPropertyFormat` says 48 kHz, but the aggregate device runs on the output device's clock and delivers at that rate. A Bluetooth headset in hands-free mode runs at 16 kHz, so the guest got labeled 3x too fast and the recognizer returned nothing. `SystemAudioCapture` labels buffers with the aggregate's nominal rate, kept current by a property listener.
+- **AAC rejects a fixed 64 kbps at 16 kHz.** The headset mic's file never opened. The m4a settings leave the bit rate to the encoder.
 - **No `NavigationSplitView`.** It lays out at its content's ideal width and overflows smaller windows, clipping both edges. The root is a plain `HStack` of columns.

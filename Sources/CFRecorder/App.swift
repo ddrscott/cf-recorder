@@ -8,7 +8,9 @@ enum Main {
         switch args.first {
         case "transcribe": Task { exit(await TranscribeCommand.run(rest)) }
         case "notes": Task { exit(await NotesCommand.run(rest)) }
+        case "title": Task { exit(await TitleCommand.run(rest)) }
         case "sync": Task { exit(await SyncCommand.run(rest)) }
+        case "miccheck": Task { exit(await MicCheck.run(rest)) }
         case "devices":
             // Input devices as `uid<TAB>name`, the UIDs Settings stores.
             for d in AudioDevices.inputs() { print("\(d.uid)\t\(d.name)") }

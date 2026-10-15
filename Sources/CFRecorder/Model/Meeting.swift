@@ -16,12 +16,21 @@ struct Utterance: Identifiable, Codable, Hashable, Sendable {
 /// `me.m4a`, `them.m4a`, `transcript.md`, and `notes.md`.
 struct Meeting: Codable, Sendable {
     var title: String
+    /// The last title the notes suggested. While `title` still matches it (or is empty),
+    /// new notes may retitle the call; once you type your own, they leave it alone.
+    var autoTitle: String?
     var theirName: String
     var myName: String
     var startedAt: Date
     var duration: Double = 0
     var utterances: [Utterance] = []
     var notes: String = ""
+
+    mutating func suggestTitle(_ suggested: String) {
+        guard title.isEmpty || title == autoTitle else { return }
+        title = suggested
+        autoTitle = suggested
+    }
 
     func name(for speaker: Speaker) -> String {
         speaker == .me ? myName : theirName

@@ -29,6 +29,8 @@ final class StreamTranscriber: @unchecked Sendable {
     // Touched only from the audio callback.
     private var converter: AVAudioConverter?
     private var file: AVAudioFile?
+    private var fileConverter: AVAudioConverter?
+    private var fileFailed = false
     private var lastLevelHost: UInt64 = 0
 
     /// Seconds between the session start and this stream's first buffer. The recognizer's
@@ -152,13 +154,14 @@ final class StreamTranscriber: @unchecked Sendable {
     }
 
     private func write(_ buffer: AVAudioPCMBuffer) {
-        if file == nil {
+        if file == nil && !fileFailed {
             let format = buffer.format
             let settings: [String: Any] = [
                 AVFormatIDKey: kAudioFormatMPEG4AAC,
                 AVSampleRateKey: format.sampleRate,
                 AVNumberOfChannelsKey: format.channelCount,
-                AVEncoderBitRateKey: 64_000 * Int(format.channelCount),
+                // No bit rate: a fixed one fails at a headset's 16 kHz (64 kbps does) and
+                // the file never opens. The encoder's default fits every rate.
             ]
             do {
                 file = try AVAudioFile(
@@ -166,14 +169,43 @@ final class StreamTranscriber: @unchecked Sendable {
                     commonFormat: format.commonFormat, interleaved: format.isInterleaved
                 )
             } catch {
-                Log.app.error("Couldn't open \(self.fileURL.lastPathComponent): \(error.localizedDescription)")
+                // Once is enough; retrying on every buffer just floods the log.
+                fileFailed = true
+                Log.app.error("Couldn't open \(self.fileURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
+        guard let file else { return }
         do {
-            try file?.write(from: buffer)
+            // A Bluetooth headset can change sample rate mid-call; the file keeps its first format.
+            if buffer.format == file.processingFormat {
+                try file.write(from: buffer)
+            } else if let converted = convertForFile(buffer, to: file.processingFormat) {
+                try file.write(from: converted)
+            }
         } catch {
             Log.app.error("Write to \(self.fileURL.lastPathComponent) failed: \(error.localizedDescription)")
         }
+    }
+
+    private func convertForFile(_ buffer: AVAudioPCMBuffer, to format: AVAudioFormat) -> AVAudioPCMBuffer? {
+        if fileConverter == nil || fileConverter?.inputFormat != buffer.format {
+            fileConverter = AVAudioConverter(from: buffer.format, to: format)
+        }
+        guard let fileConverter else { return nil }
+        let capacity = AVAudioFrameCount(Double(buffer.frameLength) * format.sampleRate / buffer.format.sampleRate) + 1024
+        guard let out = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: capacity) else { return nil }
+        var fed = false
+        var error: NSError?
+        fileConverter.convert(to: out, error: &error) { _, status in
+            if fed {
+                status.pointee = .noDataNow
+                return nil
+            }
+            fed = true
+            status.pointee = .haveData
+            return buffer
+        }
+        return error == nil && out.frameLength > 0 ? out : nil
     }
 
     private func reportLevel(_ buffer: AVAudioPCMBuffer) {
