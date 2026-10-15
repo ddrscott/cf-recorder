@@ -127,6 +127,9 @@ function notesHTML(md) {
   }).join("");
 }
 
+/** Undoes whatever the current view started (audio, listeners), so leaving a call stops it. */
+let teardown = null;
+
 async function renderCall(id) {
   view.innerHTML = `<p class="muted mono pad">loading…</p>`;
   const data = await getJSON(`/api/calls/${encodeURIComponent(id)}`);
@@ -135,83 +138,292 @@ async function renderCall(id) {
   const has = new Set(data.files.map((f) => f.name));
   const file = (name) => api(`/api/calls/${encodeURIComponent(id)}/files/${name}`);
   const utterances = m.utterances ?? [];
+  const audible = ["me", "them"].filter((t) => has.has(`${t}.m4a`));
 
+  document.body.classList.add("is-call");
   view.innerHTML = `
-    <div class="callview">
-      <section>
-        <div class="head">
-          <h1>${esc(m.title || "Untitled call")}</h1>
-          <div class="m">${m.startedAt ? esc(when(m.startedAt)) : ""} · ${clock(m.duration)} · ${esc(names.me)} and ${esc(names.them)}</div>
-          ${has.has("me.m4a") || has.has("them.m4a") ? `
-          <div class="player">
-            <button id="play"><span class="d">$</span> <span id="playLabel">play</span></button>
-            <input id="seek" type="range" min="0" max="${Math.max(1, Math.ceil(m.duration || 1))}" step="0.1" value="0">
-            <span class="time" id="time">00:00 / ${clock(m.duration)}</span>
-            <select id="rate"><option>1</option><option>1.25</option><option>1.5</option><option>2</option></select>
-          </div>` : ""}
+    <div class="callpage">
+      <div class="head">
+        <h1>${esc(m.title || "Untitled call")}</h1>
+        <div class="m">${m.startedAt ? esc(when(m.startedAt)) : ""} · ${clock(m.duration)} · <span class="spk me">${esc(names.me)}</span> and <span class="spk them">${esc(names.them)}</span></div>
+      </div>
+      <div class="tabs" role="tablist">
+        <button role="tab" data-pane="transcript" aria-selected="true">transcript</button>
+        <button role="tab" data-pane="notes" aria-selected="false">notes</button>
+      </div>
+      <div class="callview" data-pane="transcript">
+        <section class="pane transcript-pane" id="transcriptPane">
+          <div class="section-bar">
+            <p class="h">transcript</p>
+            <span class="muted mono small">${utterances.length} lines</span>
+            <button class="follow" id="follow" hidden><span class="d">$</span> follow</button>
+          </div>
+          <div class="transcript">
+            ${utterances.map((u, i) => {
+              const prev = utterances[i - 1];
+              const head = !prev || prev.speaker !== u.speaker || u.start - prev.end > 20;
+              return `<div class="u ${u.speaker === "me" ? "me" : "them"}" data-start="${u.start}" data-end="${u.end}">
+                ${head ? `<div class="who">${esc(names[u.speaker] ?? u.speaker)}<time>${clock(u.start)}</time></div>` : ""}
+                <div class="b">${esc(u.text)}</div></div>`;
+            }).join("") || `<p class="muted mono">Nothing was transcribed.</p>`}
+          </div>
+        </section>
+        <aside class="pane notes">
+          <div class="section-bar"><p class="h">notes</p></div>
+          <div class="body">${m.notes ? notesHTML(m.notes) : `<p class="muted mono">No notes for this call.</p>`}</div>
+          <div class="section-bar"><p class="h">files</p></div>
           <div class="files">${[...has].sort().map((n) => `<a href="${file(n)}" download>${esc(n)}</a>`).join("")}</div>
+        </aside>
+      </div>
+      ${audible.length ? `
+      <footer class="dock">
+        <button class="play" id="play" aria-label="Play"><span class="d">$</span> <span id="playLabel">play</span></button>
+        <span class="time" id="now">00:00</span>
+        <div class="wave" id="wave" role="slider" tabindex="0" aria-label="Seek" aria-valuemin="0" aria-valuemax="${Math.round(m.duration || 0)}" aria-valuenow="0">
+          <canvas></canvas>
+          <span class="lane me">${esc(names.me)}</span>
+          <span class="lane them">${esc(names.them)}</span>
+          <span class="tip" hidden></span>
         </div>
-        <div class="section-bar"><p class="h">transcript</p><span class="muted mono" style="font-size:12px">${utterances.length} lines</span></div>
-        <div class="transcript" id="transcript">
-          ${utterances.map((u, i) => {
-            const prev = utterances[i - 1];
-            const head = !prev || prev.speaker !== u.speaker || u.start - prev.end > 20;
-            return `<div class="u ${u.speaker === "me" ? "me" : "them"}" data-start="${u.start}" data-end="${u.end}">
-              ${head ? `<div class="who">${esc(names[u.speaker] ?? u.speaker)}<time>${clock(u.start)}</time></div>` : ""}
-              <div class="b">${esc(u.text)}</div></div>`;
-          }).join("") || `<p class="muted mono">Nothing was transcribed.</p>`}
-        </div>
-      </section>
-      <aside class="notes">
-        <div class="section-bar"><p class="h">notes</p></div>
-        <div class="body">${m.notes ? notesHTML(m.notes) : `<p class="muted mono">No notes for this call.</p>`}</div>
-      </aside>
+        <span class="time" id="total">${clock(m.duration)}</span>
+        <select id="rate" aria-label="Speed"><option value="1">1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select>
+      </footer>` : ""}
     </div>`;
 
+  // Narrow screens show one pane at a time.
+  const callview = view.querySelector(".callview");
+  view.querySelectorAll(".tabs [role=tab]").forEach((tab) => tab.addEventListener("click", () => {
+    callview.dataset.pane = tab.dataset.pane;
+    view.querySelectorAll(".tabs [role=tab]").forEach((t) => t.setAttribute("aria-selected", String(t === tab)));
+  }));
+
+  if (!audible.length) return;
+
   // Both tracks play together on one clock; "me" leads and "them" follows it.
-  const tracks = ["me", "them"].filter((t) => has.has(`${t}.m4a`)).map((t) => {
+  const tracks = audible.map((t) => {
     const a = new Audio(file(`${t}.m4a`));
     a.preload = "metadata";
     return a;
   });
-  if (!tracks.length) return;
   const lead = tracks[0];
-  const playBtn = view.querySelector("#playLabel");
-  const seek = view.querySelector("#seek");
-  const time = view.querySelector("#time");
+  const duration = () => (Number.isFinite(lead.duration) && lead.duration) || m.duration || 1;
+  const playLabel = view.querySelector("#playLabel");
+  const nowEl = view.querySelector("#now");
+  const pane = view.querySelector("#transcriptPane");
+  const followBtn = view.querySelector("#follow");
   const bubbles = [...view.querySelectorAll(".u")];
-  let dragging = false;
+  const wave = view.querySelector("#wave");
+  const canvas = wave.querySelector("canvas");
+  const tip = wave.querySelector(".tip");
+  const aborter = new AbortController();
+  let scrubTo = null; // seconds while dragging the waveform, otherwise null
+  let hoverX = null;
+  let follow = true;
+  let current = null;
+  let frame = 0;
 
-  const setTime = (t) => tracks.forEach((a) => { a.currentTime = t; });
+  const setTime = (t) => {
+    t = Math.min(Math.max(0, t), duration());
+    tracks.forEach((a) => { a.currentTime = t; });
+    tick();
+  };
   const play = () => Promise.all(tracks.map((a) => a.play())).catch(() => {});
   const pause = () => tracks.forEach((a) => a.pause());
-  view.querySelector("#play").onclick = () => (lead.paused ? play() : pause());
+  const toggle = () => (lead.paused ? play() : pause());
+
+  view.querySelector("#play").onclick = toggle;
   view.querySelector("#rate").onchange = (e) => tracks.forEach((a) => { a.playbackRate = Number(e.target.value); });
-  seek.oninput = () => { dragging = true; time.textContent = `${clock(seek.value)} / ${clock(m.duration)}`; };
-  seek.onchange = () => { dragging = false; setTime(Number(seek.value)); };
   bubbles.forEach((b) => b.querySelector(".b").addEventListener("click", () => {
-    setTime(Math.max(0, Number(b.dataset.start) - 0.4));
+    setFollow(true);
+    setTime(Number(b.dataset.start) - 0.4);
     play();
   }));
-  lead.onplay = () => { playBtn.textContent = "pause"; };
-  lead.onpause = () => { playBtn.textContent = "play"; };
+  lead.onplay = () => { playLabel.textContent = "pause"; loop(); };
+  lead.onpause = () => { playLabel.textContent = "play"; tick(); };
   lead.onended = pause;
-  lead.ontimeupdate = () => {
-    const t = lead.currentTime;
-    for (const a of tracks.slice(1)) if (!a.paused && Math.abs(a.currentTime - t) > 0.25) a.currentTime = t;
-    if (!dragging) seek.value = t;
-    time.textContent = `${clock(t)} / ${clock(m.duration)}`;
-    let current = null;
-    for (const b of bubbles) {
-      const on = t >= Number(b.dataset.start) && t <= Number(b.dataset.end) + 0.3;
-      b.classList.toggle("now", on);
-      if (on) current = b;
-    }
-    if (current && !lead.paused) {
-      const r = current.getBoundingClientRect();
-      if (r.top < 80 || r.bottom > innerHeight) current.scrollIntoView({ block: "center", behavior: "smooth" });
-    }
+  lead.onloadedmetadata = () => { view.querySelector("#total").textContent = clock(duration()); tick(); };
+
+  // Scrolling the transcript yourself stops it following playback until you ask it to.
+  const setFollow = (on) => { follow = on; followBtn.hidden = on; };
+  followBtn.onclick = () => { setFollow(true); if (current) center(current, "smooth"); };
+  for (const type of ["wheel", "touchmove"]) pane.addEventListener(type, () => { if (!lead.paused) setFollow(false); }, { passive: true });
+  const center = (el, behavior) => {
+    const top = el.offsetTop - pane.clientHeight / 2 + el.offsetHeight / 2;
+    pane.scrollTo({ top, behavior });
   };
+
+  // ---- Waveform: "me" above the center line, "them" below, each in its own color ----
+
+  const peaks = {}; // speaker -> { values: Float32Array, seconds }
+  const ctx2d = canvas.getContext("2d");
+  const css = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+
+  function draw(t) {
+    const dpr = devicePixelRatio || 1;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+    }
+    const g = ctx2d;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    const mid = h / 2, half = mid - 2, dur = duration();
+    const playX = (t / dur) * w;
+    const colors = { me: css("--me"), them: css("--them") };
+
+    for (const speaker of ["me", "them"]) {
+      const dir = speaker === "me" ? -1 : 1;
+      const p = peaks[speaker];
+      g.fillStyle = colors[speaker];
+      for (const played of [false, true]) {
+        g.save();
+        g.beginPath();
+        g.rect(played ? 0 : playX, 0, played ? playX : w - playX, h);
+        g.clip();
+        g.globalAlpha = played ? 1 : 0.35;
+        if (p) {
+          // One 2px bar per 3px of width, each the loudest stretch it covers.
+          for (let x = 0; x < w; x += 3) {
+            const a = Math.floor(((x / w) * dur / p.seconds) * p.values.length);
+            const b = Math.max(a + 1, Math.floor((((x + 3) / w) * dur / p.seconds) * p.values.length));
+            let v = 0;
+            for (let i = a; i < b && i < p.values.length; i++) v = Math.max(v, p.values[i]);
+            const bar = Math.max(1, v * half);
+            g.fillRect(x, dir < 0 ? mid - 1 - bar : mid + 1, 2, bar);
+          }
+        } else {
+          // Until the audio decodes, the transcript's timing shows who talked when.
+          for (const u of utterances) {
+            if ((u.speaker === "me" ? "me" : "them") !== speaker) continue;
+            const x0 = (u.start / dur) * w, x1 = Math.max(x0 + 1, (u.end / dur) * w);
+            g.fillRect(x0, dir < 0 ? mid - 1 - half * 0.4 : mid + 1, x1 - x0, half * 0.4);
+          }
+        }
+        g.restore();
+      }
+    }
+
+    g.globalAlpha = 1;
+    g.fillStyle = css("--line");
+    g.fillRect(0, mid - 0.5, w, 1);
+    if (hoverX !== null && scrubTo === null) {
+      g.fillStyle = css("--muted");
+      g.fillRect(Math.round(hoverX), 0, 1, h);
+    }
+    g.fillStyle = css("--ink");
+    g.fillRect(Math.round(playX) - 1, 0, 2, h);
+  }
+
+  async function loadPeaks(speaker, url) {
+    const res = await fetch(url, { credentials: "same-origin", signal: aborter.signal });
+    const bytes = await res.arrayBuffer();
+    // Decoding at 8 kHz keeps an hour-long track to about 100 MB while we measure it.
+    const audio = await new OfflineAudioContext(1, 1, 8000).decodeAudioData(bytes);
+    const samples = audio.getChannelData(0);
+    const n = Math.min(8000, Math.max(1, Math.floor(audio.duration * 20)));
+    const per = samples.length / n;
+    const values = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      let sum = 0;
+      const s = Math.floor(i * per), e = Math.min(samples.length, Math.floor((i + 1) * per));
+      for (let j = s; j < e; j++) sum += samples[j] * samples[j];
+      values[i] = Math.sqrt(sum / Math.max(1, e - s));
+    }
+    // Scale each track to its own loud speech so a quiet mic still reads.
+    const sorted = Float32Array.from(values).sort();
+    const loud = sorted[Math.floor(sorted.length * 0.98)] || 1;
+    for (let i = 0; i < n; i++) values[i] = Math.min(1, values[i] / loud);
+    peaks[speaker] = { values, seconds: audio.duration };
+    tick();
+  }
+  audible.forEach((t) => loadPeaks(t, file(`${t}.m4a`)).catch(() => {}));
+
+  const timeAt = (clientX) => {
+    const r = canvas.getBoundingClientRect();
+    return Math.min(Math.max(0, (clientX - r.left) / r.width), 1) * duration();
+  };
+  const showTip = (x, t) => {
+    tip.hidden = false;
+    tip.textContent = clock(t);
+    tip.style.left = `${x}px`;
+  };
+  wave.addEventListener("pointerdown", (e) => {
+    wave.setPointerCapture(e.pointerId);
+    scrubTo = timeAt(e.clientX);
+    tick();
+  });
+  wave.addEventListener("pointermove", (e) => {
+    const r = canvas.getBoundingClientRect();
+    hoverX = e.clientX - r.left;
+    const t = timeAt(e.clientX);
+    if (scrubTo !== null) scrubTo = t;
+    showTip(Math.min(Math.max(hoverX, 0), r.width), t);
+    tick();
+  });
+  wave.addEventListener("pointerup", () => {
+    if (scrubTo === null) return;
+    const t = scrubTo;
+    scrubTo = null;
+    setTime(t);
+  });
+  wave.addEventListener("pointercancel", () => { scrubTo = null; tick(); });
+  wave.addEventListener("pointerleave", () => { hoverX = null; if (scrubTo === null) tip.hidden = true; tick(); });
+  wave.addEventListener("keydown", (e) => {
+    const step = { ArrowLeft: -5, ArrowRight: 5, PageDown: -30, PageUp: 30 }[e.key];
+    if (step) { e.preventDefault(); setTime(lead.currentTime + step); }
+    else if (e.key === "Home") { e.preventDefault(); setTime(0); }
+    else if (e.key === "End") { e.preventDefault(); setTime(duration()); }
+  });
+
+  // ---- Clock ----
+
+  function tick() {
+    const t = scrubTo ?? lead.currentTime;
+    for (const a of tracks.slice(1)) if (!a.paused && Math.abs(a.currentTime - lead.currentTime) > 0.25) a.currentTime = lead.currentTime;
+    nowEl.textContent = clock(t);
+    wave.setAttribute("aria-valuenow", String(Math.round(t)));
+    wave.setAttribute("aria-valuetext", `${clock(t)} of ${clock(duration())}`);
+    draw(t);
+
+    let on = null;
+    for (const b of bubbles) {
+      const hit = t >= Number(b.dataset.start) && t <= Number(b.dataset.end) + 0.3;
+      b.classList.toggle("now", hit);
+      if (hit) on = b;
+    }
+    if (on && on !== current && follow) {
+      const r = on.getBoundingClientRect(), p = pane.getBoundingClientRect();
+      if (r.top < p.top + 48 || r.bottom > p.bottom - 24) center(on, "smooth");
+    }
+    current = on ?? current;
+  }
+  function loop() {
+    cancelAnimationFrame(frame);
+    tick();
+    if (!lead.paused) frame = requestAnimationFrame(loop);
+  }
+
+  // Space plays and pauses; arrows skip 5 seconds. Leave typing and controls alone.
+  const onKey = (e) => {
+    if (e.metaKey || e.ctrlKey || e.altKey || e.target.closest("input, select, textarea, button, [role=slider]")) return;
+    if (e.key === " ") { e.preventDefault(); toggle(); }
+    else if (e.key === "ArrowLeft") { e.preventDefault(); setTime(lead.currentTime - 5); }
+    else if (e.key === "ArrowRight") { e.preventDefault(); setTime(lead.currentTime + 5); }
+  };
+  document.addEventListener("keydown", onKey);
+  const resize = new ResizeObserver(() => tick());
+  resize.observe(canvas);
+
+  teardown = () => {
+    pause();
+    tracks.forEach((a) => { a.removeAttribute("src"); a.load(); });
+    cancelAnimationFrame(frame);
+    aborter.abort();
+    resize.disconnect();
+    document.removeEventListener("keydown", onKey);
+  };
+  tick();
 }
 
 // ---- Account menu ----
@@ -248,6 +460,9 @@ function renderAccount() {
 let user = null;
 
 async function route() {
+  teardown?.();
+  teardown = null;
+  document.body.classList.remove("is-call");
   const params = new URLSearchParams(location.search);
   if (!user) return renderLogin(params);
   const m = location.hash.match(/^#\/c\/(.+)$/);
