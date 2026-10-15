@@ -1,4 +1,4 @@
-// askscottpierce.com/recordings: the web side of CF Recorder.
+// askscottpierce.com/recordings: the web side of Recorder.
 //
 //   /recordings/                 viewer (static files in public/recordings)
 //   /recordings/api/…            viewer API, signed-in session cookie, read-only

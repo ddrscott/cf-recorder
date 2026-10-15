@@ -1,4 +1,4 @@
-// Viewer for synced CF Recorder calls. Hash routes: #/ is the list, #/c/<id> is one call.
+// Viewer for synced Recorder calls. Hash routes: #/ is the list, #/c/<id> is one call.
 const BASE = "/recordings";
 const api = (path) => `${BASE}${path}`;
 const view = document.getElementById("view");
@@ -94,7 +94,7 @@ async function renderList() {
           <div class="m">${esc(when(c.started_at))} · ${clock(c.duration)} · with ${esc(c.their_name)} · ${c.lines} lines</div>
           ${c.preview ? `<div class="p">${esc(c.preview)}</div>` : ""}
         </a>`).join("")
-      : `<div class="empty mono">${calls.length ? "Nothing matches." : "No calls yet. Connect CF Recorder on your Mac in Settings → Sync."}</div>`;
+      : `<div class="empty mono">${calls.length ? "Nothing matches." : "No calls yet. Connect Recorder on your Mac in Settings → Sync."}</div>`;
   };
   view.innerHTML = `
     <div class="list">

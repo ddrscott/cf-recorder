@@ -2,7 +2,7 @@ Live at https://askscottpierce.com/recordings
 
 # Recordings
 
-The web side of CF Recorder. The Mac app syncs each call folder here over an OAuth-protected API, and the viewer lets you read transcripts and notes and play both tracks from anywhere.
+The web side of Recorder. The Mac app syncs each call folder here over an OAuth-protected API, and the viewer lets you read transcripts and notes and play both tracks from anywhere.
 
 It's one Cloudflare Worker: R2 holds the files, D1 holds sign-in state and an index of calls, and KV holds OAuth clients and grants (`@cloudflare/workers-oauth-provider`).
 

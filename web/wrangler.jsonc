@@ -1,6 +1,6 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
-  // Web side of CF Recorder: the Mac app syncs each call folder here, and the
+  // Web side of Recorder: the Mac app syncs each call folder here, and the
   // viewer at askscottpierce.com/recordings reads it back from anywhere.
   "name": "recordings",
   "main": "src/server.ts",

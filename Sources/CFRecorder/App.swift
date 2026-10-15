@@ -25,7 +25,7 @@ struct CFRecorderApp: App {
     @State private var model = AppModel()
 
     var body: some Scene {
-        Window("CF Recorder", id: "main") {
+        Window("Recorder", id: "main") {
             RootView()
                 .environment(model)
                 .frame(minWidth: 820, minHeight: 520)
@@ -75,7 +75,7 @@ struct MenuBarContent: View {
             NSApp.activate()
         }
         Divider()
-        Button("Quit CF Recorder") { NSApp.terminate(nil) }
+        Button("Quit Recorder") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
     }
 }

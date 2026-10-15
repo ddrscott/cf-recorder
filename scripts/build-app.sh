@@ -1,5 +1,5 @@
 #!/bin/sh
-# Builds build/CF Recorder.app from the Swift package and signs it.
+# Builds build/Recorder.app from the Swift package and signs it.
 # Signing with a real identity keeps macOS from re-asking for mic and audio
 # permissions on every rebuild. Override with CODESIGN_IDENTITY=- for ad-hoc.
 set -eu
@@ -9,7 +9,7 @@ config="${CONFIG:-release}"
 swift build -c "$config"
 bin="$(swift build -c "$config" --show-bin-path)/CFRecorder"
 
-app="build/CF Recorder.app"
+app="build/Recorder.app"
 rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
 cp "$bin" "$app/Contents/MacOS/CFRecorder"

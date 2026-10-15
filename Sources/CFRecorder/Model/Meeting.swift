@@ -74,10 +74,17 @@ struct MeetingSummary: Identifiable, Hashable {
 }
 
 enum MeetingStore {
-    static var library: URL {
+    static let library: URL = {
         let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return docs.appendingPathComponent("CF Recorder", isDirectory: true)
-    }
+        let folder = docs.appendingPathComponent("Recorder", isDirectory: true)
+        // Calls used to live in "CF Recorder"; carry them over once.
+        let old = docs.appendingPathComponent("CF Recorder", isDirectory: true)
+        let fm = FileManager.default
+        if fm.fileExists(atPath: old.path) && !fm.fileExists(atPath: folder.path) {
+            try? fm.moveItem(at: old, to: folder)
+        }
+        return folder
+    }()
 
     static func newFolder(for date: Date) throws -> URL {
         let formatter = DateFormatter()

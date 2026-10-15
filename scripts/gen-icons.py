@@ -3,7 +3,7 @@
 # requires-python = ">=3.11"
 # dependencies = ["pillow>=10"]
 # ///
-"""Draw the CF Recorder icon and write every size the app and the web viewer use.
+"""Draw the Recorder icon and write every size the app and the web viewer use.
 
 The mark is a record button: a Signal Orange disc inside a thin orange ring on a
 flat dark ground, in the family of cf-thunder and max-pane.

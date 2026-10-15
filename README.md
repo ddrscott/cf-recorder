@@ -1,6 +1,6 @@
-<img src="Resources/AppIcon.png" width="96" alt="CF Recorder icon">
+<img src="Resources/AppIcon.png" width="96" alt="Recorder icon">
 
-# CF Recorder
+# Recorder
 
 Simple native call recording for the Mac, with speaker separation and transcription, backed by Cloudflare and local models.
 
@@ -21,7 +21,7 @@ Nothing leaves the Mac until you connect sync.
 ## Build and run
 
 ```sh
-make run       # build build/CF Recorder.app and open it
+make run       # build build/Recorder.app and open it
 make install   # copy it to /Applications
 ```
 
@@ -47,11 +47,11 @@ A device you picked that's unplugged stops the recording from starting rather th
 
 ### Sync
 
-Settings → Sync → Connect opens your browser to sign in and approve CF Recorder; the tokens stay in the Keychain. After that each call syncs a few seconds after it changes, the transcript syncs every 30 seconds during a call (audio goes up once you stop), and launching the app backfills anything missed. Only files whose SHA-256 differs from the server's copy are sent. The API is in `web/README.md` under `// SYNC_API`.
+Settings → Sync → Connect opens your browser to sign in and approve Recorder; the tokens stay in the Keychain. After that each call syncs a few seconds after it changes, the transcript syncs every 30 seconds during a call (audio goes up once you stop), and launching the app backfills anything missed. Only files whose SHA-256 differs from the server's copy are sent. The API is in `web/README.md` under `// SYNC_API`.
 
 ## Where calls go
 
-Each call gets a folder in `~/Documents/CF Recorder/`:
+Each call gets a folder in `~/Documents/Recorder/`:
 
 ```
 2026-10-15 140312/
@@ -67,7 +67,7 @@ Each call gets a folder in `~/Documents/CF Recorder/`:
 The app binary doubles as a CLI. Both commands read input and write to stdout.
 
 ```sh
-cfr="/Applications/CF Recorder.app/Contents/MacOS/CFRecorder"
+cfr="/Applications/Recorder.app/Contents/MacOS/CFRecorder"
 
 "$cfr" transcribe call.m4a > call.txt     # [mm:ss] text, one line per phrase
 "$cfr" notes < transcript.md > notes.md   # uses the engine from Settings

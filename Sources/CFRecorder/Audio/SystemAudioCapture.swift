@@ -44,7 +44,7 @@ final class SystemAudioCapture {
     func start(onBuffer: @escaping (AVAudioPCMBuffer, AVAudioTime) -> Void) throws {
         let description = CATapDescription(stereoGlobalTapButExcludeProcesses: ownProcessObjects())
         description.uuid = UUID()
-        description.name = "CF Recorder"
+        description.name = "Recorder"
         description.isPrivate = true
         description.muteBehavior = .unmuted
 
@@ -60,7 +60,7 @@ final class SystemAudioCapture {
 
         let outputUID = try defaultOutputUID()
         let aggregate: [String: Any] = [
-            kAudioAggregateDeviceNameKey: "CF Recorder Tap",
+            kAudioAggregateDeviceNameKey: "Recorder Tap",
             // The prefix keeps it out of the input device list (AudioDevices).
             kAudioAggregateDeviceUIDKey: "CFRecorder-\(UUID().uuidString)",
             kAudioAggregateDeviceMainSubDeviceKey: outputUID,

@@ -94,7 +94,7 @@ struct SettingsView: View {
             } header: {
                 Text("Sync")
             } footer: {
-                Text("Any server that speaks the CF Recorder sync API works. You sign in once in your browser; the app keeps its token in the Keychain.")
+                Text("Any server that speaks the Recorder sync API works. You sign in once in your browser; the app keeps its token in the Keychain.")
                     .font(.footnote).foregroundStyle(.secondary)
             }
             Section {

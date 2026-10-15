@@ -50,7 +50,7 @@ enum SyncClient {
         guard let http = challenge as? HTTPURLResponse, http.statusCode == 401,
               let header = http.value(forHTTPHeaderField: "WWW-Authenticate"),
               let prmURL = quoted("resource_metadata", in: header).flatMap(URL.init(string:))
-        else { throw SyncError("\(server) doesn't look like a CF Recorder sync server.") }
+        else { throw SyncError("\(server) doesn't look like a Recorder sync server.") }
 
         let prm = try await getJSON(prmURL)
         guard let resource = prm["resource"] as? String,
@@ -71,9 +71,9 @@ enum SyncClient {
               let register = (asm["registration_endpoint"] as? String).flatMap(URL.init(string:))
         else { throw SyncError("The server's OAuth metadata is incomplete or doesn't support app registration.") }
 
-        log("Registering CF Recorder with the server…")
+        log("Registering Recorder with the server…")
         let registration = try await postJSON(register, [
-            "client_name": "CF Recorder on \(Host.current().localizedName ?? "a Mac")",
+            "client_name": "Recorder on \(Host.current().localizedName ?? "a Mac")",
             "redirect_uris": ["http://127.0.0.1/callback"],
             "grant_types": ["authorization_code", "refresh_token"],
             "response_types": ["code"],
@@ -421,10 +421,10 @@ private final class LoopbackListener: @unchecked Sendable {
             let isCallback = target.hasPrefix("/callback")
             let ok = isCallback && items.contains { $0.name == "code" }
             let html = """
-            <!doctype html><meta charset="utf-8"><title>CF Recorder</title>
+            <!doctype html><meta charset="utf-8"><title>Recorder</title>
             <body style="margin:0;display:grid;place-items:center;height:100vh;background:#1a1a1a;color:#e0e0e0;font:15px -apple-system,sans-serif">
             <div><p style="font:600 12px Menlo,monospace;letter-spacing:.08em;color:#8a8a8a"><span style="color:#e85d00">//</span> \(ok ? "CONNECTED" : "NOT_CONNECTED")</p>
-            <p style="font-size:20px">\(ok ? "CF Recorder is connected. You can close this tab." : "That didn't work. Head back to CF Recorder.")</p></div>
+            <p style="font-size:20px">\(ok ? "Recorder is connected. You can close this tab." : "That didn't work. Head back to Recorder.")</p></div>
             """
             let response = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nContent-Length: \(html.utf8.count)\r\nConnection: close\r\n\r\n\(html)"
             connection.send(content: Data(response.utf8), completion: .contentProcessed { _ in connection.cancel() })
