@@ -18,7 +18,7 @@ enum NotesCommand {
         )
         meeting.utterances = [Utterance(speaker: .them, text: input, start: 0, end: 0)]
         let engine: NotesEngine = args.contains("--apple") ? .apple
-            : NotesEngine(rawValue: Prefs.string(Prefs.notesEngine)) ?? .ollama
+            : NotesEngine(rawValue: Prefs.string(Prefs.notesEngine)) ?? .apple
 
         var printed = ""
         do {
@@ -54,7 +54,7 @@ enum TitleCommand {
             return 64
         }
         let engine: NotesEngine = args.contains("--apple") ? .apple
-            : NotesEngine(rawValue: Prefs.string(Prefs.notesEngine)) ?? .ollama
+            : NotesEngine(rawValue: Prefs.string(Prefs.notesEngine)) ?? .apple
         do {
             guard let title = try await NotesGenerator.title(
                 notes: notes, engine: engine,

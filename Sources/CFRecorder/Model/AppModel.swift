@@ -21,7 +21,7 @@ enum Prefs {
         UserDefaults.standard.register(defaults: [
             myName: "Me",
             theirName: "Them",
-            notesEngine: NotesEngine.ollama.rawValue,
+            notesEngine: NotesEngine.apple.rawValue,
             ollamaHost: "http://localhost:11434",
             ollamaModel: "gemma4:12b-mlx",
             liveNotes: true,
@@ -277,7 +277,7 @@ final class AppModel {
         notesRunning = true
         notesError = nil
         notedUtteranceCount = snapshot.utterances.count
-        let engine = NotesEngine(rawValue: Prefs.string(Prefs.notesEngine)) ?? .ollama
+        let engine = NotesEngine(rawValue: Prefs.string(Prefs.notesEngine)) ?? .apple
         let previous = snapshot.notes
         notesTask = Task {
             defer { notesRunning = false }

@@ -2,7 +2,7 @@ import Foundation
 import FoundationModels
 
 enum NotesEngine: String, CaseIterable, Identifiable {
-    case ollama, apple
+    case apple, ollama
     var id: String { rawValue }
     var label: String {
         switch self {

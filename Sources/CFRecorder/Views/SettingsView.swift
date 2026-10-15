@@ -4,7 +4,7 @@ struct SettingsView: View {
     @Environment(AppModel.self) private var model
     @AppStorage(Prefs.myName) private var myName = "Me"
     @AppStorage(Prefs.theirName) private var theirName = "Them"
-    @AppStorage(Prefs.notesEngine) private var engine = NotesEngine.ollama.rawValue
+    @AppStorage(Prefs.notesEngine) private var engine = NotesEngine.apple.rawValue
     @AppStorage(Prefs.ollamaHost) private var ollamaHost = "http://localhost:11434"
     @AppStorage(Prefs.ollamaModel) private var ollamaModel = "gemma4:12b-mlx"
     @AppStorage(Prefs.liveNotes) private var liveNotes = true
