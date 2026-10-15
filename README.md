@@ -23,9 +23,12 @@ Nothing leaves the Mac until you connect sync.
 ```sh
 make run       # build build/Recorder.app and open it
 make install   # copy it to /Applications
+make release   # sign, notarize, staple, and install to /Applications
 ```
 
 `scripts/build-app.sh` builds the SwiftPM target, wraps it in a `.app` with `Resources/Info.plist`, and signs it with the first Developer ID or Apple Development identity in the keychain. Signing with a stable identity matters: macOS ties the mic and system audio permissions to the signature, and an ad-hoc build gets re-prompted on every rebuild. Set `CODESIGN_IDENTITY=-` to sign ad-hoc anyway.
+
+`make release` runs `scripts/notarize.sh`: it signs with Apple's secure timestamp (`TIMESTAMP=1`; everyday builds skip it so they work offline), zips the app with `ditto`, submits it with `notarytool --wait`, staples the ticket, and checks it with `spctl`. On a rejection it prints Apple's log. It needs a Developer ID Application identity and a notarytool keychain profile, `NOTARY_PROFILE` (default `maxpane-notary`, which holds the same team's credentials). A notarized build opens on any Mac without the Gatekeeper warning.
 
 On the first recording macOS asks for two permissions: **Microphone** and **System Audio Recording Only**. Both are under System Settings → Privacy & Security if you need to flip them later.
 
@@ -84,6 +87,25 @@ open -n -W -a Recorder --args miccheck 15 --save /tmp/call --out /tmp/mic.txt   
 `transcribe` runs the same pipeline the app uses, which makes it the quickest smoke test after a change. `miccheck` opens the mic and the desktop tap the way a call does. Run it through `open` so macOS checks Recorder's mic permission; launched from a terminal it gets the terminal's, and without that permission the mic reads as pure zeros.
 
 ## How it works
+
+```mermaid
+flowchart LR
+    subgraph mac["Mac · on-device"]
+        mic["Your mic"] --> stt["Speech to text<br/>one recognizer per side"]
+        desk["Desktop audio<br/>(the guest)"] --> stt
+        stt --> notes["Notes, action items, title<br/>Ollama or Apple Intelligence"]
+        stt --> folder[("Call folder<br/>audio · transcript · notes")]
+        notes --> folder
+    end
+    subgraph cf["Cloudflare · askscottpierce.com/recordings"]
+        api["Worker<br/>sync API + OAuth"] --> r2[("R2<br/>files")]
+        api --> d1[("D1<br/>call index")]
+        r2 --> web["Web viewer"]
+    end
+    folder -- "OAuth sync<br/>changed files only" --> api
+```
+
+Audio never leaves the Mac to get transcribed. Each side is a separate stream with its own recognizer, so speaker separation comes from the hardware, not from guessing voices. Sync is the only part that touches the network, and any server that speaks the sync API below can stand in for Cloudflare.
 
 | Piece | File | Notes |
 |---|---|---|
