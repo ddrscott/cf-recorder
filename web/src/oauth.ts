@@ -73,6 +73,12 @@ async function parse(req: Request, oauth: OAuthHelpers): Promise<{ auth: AuthReq
   }
 }
 
+/**
+ * MCP clients usually register and authorize without asking for a scope. They get
+ * read-only, which is all the MCP tools need; a sync client asks for write by name.
+ */
+const granted = (auth: AuthRequest) => (auth.scope.length ? auth.scope : ["recordings:read"]);
+
 const scopeText: Record<string, string> = {
   "recordings:read": "list your calls and download transcripts, notes, and audio",
   "recordings:write": "upload calls and replace or delete them",
@@ -94,7 +100,7 @@ async function showConsent(req: Request, env: Env, oauth: OAuthHelpers): Promise
   const dest = new URL(auth.redirectUri);
   const local = ["127.0.0.1", "localhost", "[::1]"].includes(dest.hostname);
   const csrf = (await csrfToken(req))!;
-  const can = auth.scope.filter((s) => scopeText[s]).map((s) => `<li>${scopeText[s]}</li>`).join("");
+  const can = granted(auth).filter((s) => scopeText[s]).map((s) => `<li>${scopeText[s]}</li>`).join("");
 
   return page(`Connect ${name}`, `
 <p class="h">CONNECT_AN_APP</p>
@@ -137,7 +143,7 @@ async function decide(req: Request, env: Env, oauth: OAuthHelpers): Promise<Resp
   const { redirectTo } = await oauth.completeAuthorization({
     request: auth,
     userId: user.email,
-    scope: auth.scope,
+    scope: granted(auth),
     metadata: { clientName: clientLabel(client) },
     props: { email: user.email },
   });

@@ -3,6 +3,7 @@
 //   /recordings/                 viewer (static files in public/recordings)
 //   /recordings/api/…            viewer API, signed-in session cookie, read-only
 //   /recordings/api/v1/…         sync API, OAuth bearer token (README // SYNC_API)
+//   /recordings/mcp              MCP server for AI agents, OAuth bearer token, read-only
 //   /recordings/oauth/…          authorize (ours), token, register, revoke (the provider's)
 //   /.well-known/…/recordings…   RFC 8414 and RFC 9728 discovery
 //
@@ -12,14 +13,20 @@
 import { OAuthAuthorizationServer, OAuthResourceServer, type OAuthResourceContext } from "@cloudflare/workers-oauth-provider";
 import { currentUser, handleAuth } from "./auth";
 import { error, handleCalls } from "./calls";
+import { handleMcp } from "./mcp";
 import { AUTHORIZE_PATH, handleAuthorize } from "./oauth";
 
 const BASE = "/recordings"; // don't export plain values from the Worker entry module
 const API_V1 = `${BASE}/api/v1`;
+const MCP = `${BASE}/mcp`;
 
 type Props = { email: string };
 
-type OAuth = { server: OAuthAuthorizationServer<Env>; resource: OAuthResourceServer<Env, Props> };
+type OAuth = {
+  server: OAuthAuthorizationServer<Env>;
+  resource: OAuthResourceServer<Env, Props>;
+  mcp: OAuthResourceServer<Env, Props>;
+};
 const byOrigin = new Map<string, OAuth>();
 
 function oauthFor(origin: string): OAuth {
@@ -27,9 +34,10 @@ function oauthFor(origin: string): OAuth {
   if (cached) return cached;
   const issuer = `${origin}${BASE}`;
   const resourceUrl = `${origin}${API_V1}`;
+  const mcpUrl = `${origin}${MCP}`;
   const server = new OAuthAuthorizationServer<Env>({
     issuer,
-    resources: [resourceUrl],
+    resources: [resourceUrl, mcpUrl],
     defaultResource: resourceUrl,
     authorizeEndpoint: AUTHORIZE_PATH,
     tokenEndpoint: `${BASE}/oauth/token`,
@@ -55,7 +63,14 @@ function oauthFor(origin: string): OAuth {
       },
     },
   });
-  const made = { server, resource };
+  // Agents get read-only access: the MCP tools never write, whatever the token's scope.
+  const mcp = new OAuthResourceServer<Env, Props>({
+    resourceMetadata: { resource: mcpUrl, authorization_servers: [issuer], resource_name: "Recordings" },
+    requiredScopes: ["recordings:read"],
+    validateToken: (env) => (res, token) => server.validateToken(res, token, env),
+    handler: { fetch: (req: Request, env: Env) => handleMcp(req, env) },
+  });
+  const made = { server, resource, mcp };
   byOrigin.set(origin, made);
   return made;
 }
@@ -76,13 +91,15 @@ export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
     const path = url.pathname;
-    const { server, resource } = oauthFor(url.origin);
+    const { server, resource, mcp } = oauthFor(url.origin);
 
     if (path.startsWith("/.well-known/oauth-authorization-server")) return server.fetch(req, env, ctx);
+    if (path === `/.well-known/oauth-protected-resource${MCP}`) return mcp.fetch(req, env, ctx);
     if (path.startsWith("/.well-known/oauth-protected-resource")) return resource.fetch(req, env, ctx);
     if (path === AUTHORIZE_PATH) return handleAuthorize(req, env, server.getOAuthApi(env));
     if (path.startsWith(`${BASE}/oauth/`)) return server.fetch(req, env, ctx);
     if (path === API_V1 || path.startsWith(`${API_V1}/`)) return resource.fetch(req, env, ctx);
+    if (path === MCP) return mcp.fetch(req, env, ctx);
     if (path !== BASE && !path.startsWith(`${BASE}/`)) return new Response("Not found", { status: 404 });
     return app(req, env, path.slice(BASE.length));
   },

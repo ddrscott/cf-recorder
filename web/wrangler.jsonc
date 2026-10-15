@@ -22,7 +22,7 @@
     "binding": "ASSETS",
     // The viewer routes with #hash, so there's nothing to fall back to.
     "not_found_handling": "none",
-    "run_worker_first": ["/recordings", "/recordings/api/*", "/recordings/oauth/*", "/.well-known/*"]
+    "run_worker_first": ["/recordings", "/recordings/mcp", "/recordings/api/*", "/recordings/oauth/*", "/.well-known/*"]
   },
   // Sign-in codes, sessions, guess limits, and the call index (migrations/).
   "d1_databases": [

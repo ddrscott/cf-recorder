@@ -109,7 +109,76 @@ const viewer = await (await fetch(`${base}/api/calls`, { headers: { Cookie: cook
 assert.ok(viewer.calls.some((c) => c.id === id));
 assert.equal((await fetch(`${base}/api/calls/${encodeURIComponent(id)}`, { method: "DELETE", headers: { Cookie: cookie } })).status, 403);
 
-// 7. Refresh, then clean up.
+// 7. An AI agent over MCP: discover from /mcp, register, and authorize with no scope
+// (what MCP clients do), which grants read-only. Then call each tool.
+step("mcp");
+for (const [name, body] of [["transcript.md", "# E2E\n\nOct 15 · Scott and Robot\n\n[00:00] Robot: beep about the zebra budget\n"], ["notes.md", "## Summary\nIt beeped about the zebra budget."]]) {
+  r = await fetch(`${callUrl}/files/${name}`, { method: "PUT", headers: bearer, body });
+  assert.equal(r.status, 200, await r.text());
+}
+const mcpUrl = `${base}/mcp`;
+const mcpChallenge = await fetch(mcpUrl, { method: "POST", body: "{}" });
+assert.equal(mcpChallenge.status, 401);
+const mcpPrm = await (await fetch(mcpChallenge.headers.get("www-authenticate").match(/resource_metadata="([^"]+)"/)[1])).json();
+assert.equal(mcpPrm.resource, mcpUrl);
+assert.equal(mcpPrm.authorization_servers[0], issuer);
+
+const agent = await (await fetch(asm.registration_endpoint, {
+  method: "POST", headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({ client_name: "e2e agent", redirect_uris: ["http://localhost:4567/callback"], grant_types: ["authorization_code", "refresh_token"], response_types: ["code"], token_endpoint_auth_method: "none" }),
+})).json();
+const agentVerifier = b64url(randomBytes(32));
+const agentAuth = new URL(asm.authorization_endpoint);
+Object.entries({
+  response_type: "code", client_id: agent.client_id, redirect_uri: "http://localhost:4567/callback", state,
+  code_challenge: b64url(createHash("sha256").update(agentVerifier).digest()), code_challenge_method: "S256", resource: mcpUrl,
+}).forEach(([k, v]) => agentAuth.searchParams.set(k, v));
+const agentConsent = await (await fetch(agentAuth, { headers: { Cookie: cookie } })).text();
+assert.match(agentConsent, /list your calls/);
+const agentAllow = await fetch(asm.authorization_endpoint, {
+  method: "POST", redirect: "manual", headers: { Cookie: cookie },
+  body: new URLSearchParams({
+    q: agentConsent.match(/name="q" value="([^"]+)"/)[1].replace(/&amp;/g, "&"),
+    csrf: agentConsent.match(/name="csrf" value="([^"]+)"/)[1], decision: "allow",
+  }),
+});
+const agentCode = new URL(agentAllow.headers.get("location")).searchParams.get("code");
+const agentToken = await (await fetch(asm.token_endpoint, {
+  method: "POST",
+  body: new URLSearchParams({ grant_type: "authorization_code", code: agentCode, redirect_uri: "http://localhost:4567/callback", client_id: agent.client_id, code_verifier: agentVerifier, resource: mcpUrl }),
+})).json();
+assert.ok(agentToken.access_token, JSON.stringify(agentToken));
+assert.equal(agentToken.scope, "recordings:read");
+const agentBearer = { Authorization: `Bearer ${agentToken.access_token}`, "Content-Type": "application/json", Accept: "application/json, text/event-stream" };
+
+let rpcId = 0;
+const rpc = async (method, params) => {
+  const res = await fetch(mcpUrl, { method: "POST", headers: agentBearer, body: JSON.stringify({ jsonrpc: "2.0", id: ++rpcId, method, params }) });
+  assert.equal(res.status, 200, await res.clone().text());
+  const reply = await res.json();
+  assert.ok(!reply.error, JSON.stringify(reply.error));
+  return reply.result;
+};
+const init = await rpc("initialize", { protocolVersion: "2025-06-18", capabilities: {}, clientInfo: { name: "e2e", version: "1" } });
+assert.equal(init.protocolVersion, "2025-06-18");
+assert.equal((await fetch(mcpUrl, { method: "POST", headers: agentBearer, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) })).status, 202);
+const tools = (await rpc("tools/list")).tools.map((t) => t.name).sort();
+assert.deepEqual(tools, ["get_call", "list_calls", "search_calls"]);
+const toolText = async (name, args) => (await rpc("tools/call", { name, arguments: args })).content[0].text;
+assert.match(await toolText("list_calls", {}), /E2E/);
+assert.match(await toolText("search_calls", { query: "zebra budget" }), /zebra budget/);
+assert.match(await toolText("search_calls", { query: "nonexistent-word" }), /No calls mention/);
+const read = await toolText("get_call", { id });
+assert.match(read, /## Notes[\s\S]*zebra budget[\s\S]*## Transcript\n\n\[00:00\] Robot: beep/);
+const missing = await rpc("tools/call", { name: "get_call", arguments: { id: "nope" } });
+assert.equal(missing.isError, true);
+
+// The agent's read-only token can't write through the sync API, and the sync
+// client's token isn't for the MCP resource.
+assert.notEqual((await fetch(callUrl, { method: "DELETE", headers: { Authorization: `Bearer ${agentToken.access_token}` } })).status, 204);
+assert.equal((await fetch(mcpUrl, { method: "POST", headers: { ...bearer, "Content-Type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "ping" }) })).status, 401);
+
+// 8. Refresh, then clean up.
 step("refresh + delete");
 const refreshed = await (await fetch(asm.token_endpoint, {
   method: "POST",

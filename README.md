@@ -2,98 +2,26 @@
 
 # Recorder
 
-Simple native call recording for the Mac, with speaker separation and transcription, backed by Cloudflare and local models.
+I get invited to meetings on more platforms than I can count, and most of them only record if the host pays for it. The usual workaround is a separate recorder sitting next to the laptop, picking up the speakers and you over the air. That means no headset, so it's useless in a noisy office or a coffee shop.
 
-- **Speaker separation without guesswork.** Your mic and the other side of the call are recorded as two separate tracks, so every line is labeled by where it came from, not by a model guessing who's talking.
-- **Live transcription on your Mac.** Apple's on-device `SpeechAnalyzer` transcribes both tracks as you talk, shown as a chat: you on the right, them on the left.
-- **Notes and action items from a local model.** Ollama or Apple Intelligence writes a summary, decisions, action items, and open questions during the call and again when you stop.
-- **Your calls anywhere, on your own Cloudflare.** Optional sync over standard OAuth sends each call to a small Cloudflare Worker (R2 + D1) where you can read and play them back from any browser. The Worker is in `web/`, and the API is documented so you can host your own.
+Recorder is a Mac app that records the call from your headset, transcribes both sides, and puts the transcripts somewhere you and your AI agent can both get to them.
 
-Nothing leaves the Mac until you connect sync.
+## What it does
 
-## Requirements
-
-- macOS 26 (Tahoe) on Apple silicon
-- Swift 6.2+ (the Command Line Tools are enough; Xcode isn't needed)
-- [Ollama](https://ollama.com) with a model pulled, for notes. Defaults to `gemma4:12b-mlx`. Or switch Settings to Apple Intelligence.
-- A headset. With speakers, the mic picks up the other person too and they show up on both sides.
-
-## Build and run
-
-```sh
-make run       # build build/Recorder.app and open it
-make install   # copy it to /Applications
-make release   # sign, notarize, staple, and install to /Applications
-```
-
-`scripts/build-app.sh` builds the SwiftPM target, wraps it in a `.app` with `Resources/Info.plist`, and signs it with the first Developer ID or Apple Development identity in the keychain. Signing with a stable identity matters: macOS ties the mic and system audio permissions to the signature, and an ad-hoc build gets re-prompted on every rebuild. Set `CODESIGN_IDENTITY=-` to sign ad-hoc anyway.
-
-`make release` runs `scripts/notarize.sh`: it signs with Apple's secure timestamp (`TIMESTAMP=1`; everyday builds skip it so they work offline), zips the app with `ditto`, submits it with `notarytool --wait`, staples the ticket, and checks it with `spctl`. On a rejection it prints Apple's log. It needs a Developer ID Application identity and a notarytool keychain profile, `NOTARY_PROFILE` (default `maxpane-notary`, which holds the same team's credentials). A notarized build opens on any Mac without the Gatekeeper warning.
-
-On the first recording macOS asks for two permissions: **Microphone** and **System Audio Recording Only**. Both are under System Settings → Privacy & Security if you need to flip them later.
-
-## Using it
-
-- **⌘R** starts and stops a recording, from the window or the menu bar icon.
-- Live, unfinished text shows as a dashed bubble with an orange `$`; it firms up when the recognizer finalizes the phrase.
-- Type a title and the other person's name in the header. Both are saved with the call. Each time notes are written, the call gets a short title from them, unless you've typed your own.
-- Notes refresh about every 90 seconds during the call and once more when you stop. Click a checkbox to tick off an action item; the change saves to `notes.md`.
-
-Settings (⌘,) holds your name, the default name for the other person, the notes engine, the Ollama host and model, audio devices, and sync.
-
-### Audio sources
-
-- **Your mic** follows the system default input unless you pick a device.
-- **The guest** is desktop audio by default: everything the Mac plays, like a Zoom or Meet call in your headset. Turn that off to record the guest from a second input device instead, like a second mic for someone in the room. Each device gets its own engine, so two mics record at once.
-
-A device you picked that's unplugged stops the recording from starting rather than quietly recording the wrong mic. If either side sends no audio at all for four seconds, the header says so.
-
-### Sync
-
-Settings → Sync → Connect opens your browser to sign in and approve Recorder; the tokens stay in the Keychain. After that each call syncs a few seconds after it changes, the transcript syncs every 30 seconds during a call (audio goes up once you stop), and launching the app backfills anything missed. Only files whose SHA-256 differs from the server's copy are sent. The API is in `web/README.md` under `// SYNC_API`.
-
-## Where calls go
-
-Each call gets a folder in `~/Documents/Recorder/`:
-
-```
-2026-10-15 140312/
-  me.m4a           your mic, AAC
-  them.m4a         system audio, AAC
-  meeting.json     transcript with timings, names, notes
-  transcript.md    readable transcript
-  notes.md         generated notes
-```
-
-## Command line
-
-The app binary doubles as a CLI. Both commands read input and write to stdout.
-
-```sh
-cfr="/Applications/Recorder.app/Contents/MacOS/CFRecorder"
-
-"$cfr" transcribe call.m4a > call.txt     # [mm:ss] text, one line per phrase
-"$cfr" notes < transcript.md > notes.md   # uses the engine from Settings
-"$cfr" notes --apple < transcript.md      # force Apple Intelligence
-"$cfr" title < notes.md                   # a 3-7 word title, the one the app gives the call
-"$cfr" devices                            # input devices, uid<TAB>name
-open -n -W -a Recorder --args miccheck 8 [uid] --out /tmp/mic.txt   # buffers and peak per second, mic and desktop
-open -n -W -a Recorder --args miccheck 15 --save /tmp/call --out /tmp/mic.txt   # plus m4a files and transcript
-"$cfr" sync connect [url]                 # sign in through the browser
-"$cfr" sync                               # push every call; one line per call
-"$cfr" sync status | disconnect
-```
-
-`transcribe` runs the same pipeline the app uses, which makes it the quickest smoke test after a change. `miccheck` opens the mic and the desktop tap the way a call does. Run it through `open` so macOS checks Recorder's mic permission; launched from a terminal it gets the terminal's, and without that permission the mic reads as pure zeros.
-
-## How it works
+- **Records any call, on any platform.** Your mic is one track, and everything the Mac plays is the other. No bot joins the meeting, and the host's plan doesn't matter.
+- **Works with a headset.** Bluetooth included, so you can take the call anywhere.
+- **Knows who said what.** Each side has its own track and its own recognizer, so speaker labels come from the hardware, not from a model guessing voices.
+- **Transcribes on your Mac, live.** Apple's on-device speech recognition shows the call as a chat while it happens.
+- **Writes the notes.** Apple Intelligence (or Ollama) writes a summary, decisions, action items, open questions, and a title.
+- **Syncs to Cloudflare.** Calls land in a small Worker at [askscottpierce.com/recordings](https://askscottpierce.com/recordings), where you can read them and play them back from any browser. It's standard OAuth, so you can point the app at your own server.
+- **Hands them to your AI agent.** The same Worker is an MCP server, so Claude or any MCP client can list, search, and read your calls.
 
 ```mermaid
 flowchart LR
     subgraph mac["Mac · on-device"]
         mic["Your mic"] --> stt["Speech to text<br/>one recognizer per side"]
         desk["Desktop audio<br/>(the guest)"] --> stt
-        stt --> notes["Notes, action items, title<br/>Ollama or Apple Intelligence"]
+        stt --> notes["Notes, action items, title<br/>Apple Intelligence or Ollama"]
         stt --> folder[("Call folder<br/>audio · transcript · notes")]
         notes --> folder
     end
@@ -101,32 +29,38 @@ flowchart LR
         api["Worker<br/>sync API + OAuth"] --> r2[("R2<br/>files")]
         api --> d1[("D1<br/>call index")]
         r2 --> web["Web viewer"]
+        r2 --> mcp["MCP server"]
     end
     folder -- "OAuth sync<br/>changed files only" --> api
+    mcp --> agent(["Your AI agent"])
 ```
 
-Audio never leaves the Mac to get transcribed. Each side is a separate stream with its own recognizer, so speaker separation comes from the hardware, not from guessing voices. Sync is the only part that touches the network, and any server that speaks the sync API below can stand in for Cloudflare.
+Audio never leaves the Mac to be transcribed. Sync is the only part that touches the network, and it's off until you connect it.
 
-| Piece | File | Notes |
-|---|---|---|
-| Mic capture | `Audio/SystemAudioCapture.swift` (`MicCapture`) | `AVAudioEngine` tap on the default input, rebuilt on every config change. |
-| System audio | `Audio/SystemAudioCapture.swift` | Core Audio process tap (`CATapDescription`, global, excluding this app) on a private aggregate device. No Screen Recording permission. |
-| Per-stream pipeline | `Transcription/StreamTranscriber.swift` | Writes the m4a, converts to the recognizer's format, feeds `SpeechAnalyzer` + `SpeechTranscriber` with volatile results on. |
-| Timeline | same | Each stream records its first buffer's offset from the session start, so both sides land on one clock and sort correctly. |
-| Notes | `Notes/NotesGenerator.swift` | Streams from Ollama `/api/chat`, or from `FoundationModels`. The on-device model's context is small, so long calls are condensed in chunks first. |
-| Devices | `Audio/AudioDevices.swift` | Input devices by Core Audio UID, which survives unplugging. `MicCapture(device:)` pins an engine to one. |
-| Sync | `Sync/SyncClient.swift` | OAuth discovery, dynamic registration, PKCE with a loopback listener, Keychain, hash-skipping and multipart uploads. |
-| State | `Model/AppModel.swift` | Orchestrates start/stop, live notes, autosave. Updates hop to main via `DispatchQueue.main` to keep volatile/final ordering intact. |
+## Connect your AI agent
 
-## Icon
+Add the MCP server, then sign in once in your browser when it asks:
 
-`scripts/gen-icons.py` draws the icon (Signal Orange disc in a thin ring on `#1a1a1a`) and writes `Resources/AppIcon.icns` plus the web icons in `web/public/recordings/icons/`. The `.icns` art is masked to Apple's squircle at 824 of 1024 points so macOS 26 doesn't paint a pale rim around it.
+```sh
+claude mcp add --transport http recordings https://askscottpierce.com/recordings/mcp
+```
 
-## Gotchas we hit
+Any client that speaks MCP over HTTP with OAuth works. In Claude.ai, add it as a custom connector with the same URL. Agents get read-only access through three tools: `list_calls`, `search_calls`, and `get_call` (notes, transcript, or both).
 
-- **Reserve the locale before downloading the speech model.** `AssetInventory.assetInstallationRequest(...).downloadAndInstall()` fails with a bare `_GenericObjCError 0` unless `AssetInventory.reserve(locale:)` ran first.
-- **`AVAudioFile.read` throws at end of file** instead of returning zero frames. Loop on `framePosition < length`.
-- **Bluetooth headsets stop `AVAudioEngine`.** Opening a headset's mic flips it from A2DP to the hands-free profile, and pinning any device reconfigures the engine too. The engine posts `AVAudioEngineConfigurationChange`, stops, and stays stopped, so the mic delivers nothing for the whole call. `MicCapture` restarts on every config change, and `StreamTranscriber` converts later buffers to the m4a's first format when the rate changes.
-- **The tap's format lies about its sample rate.** `kAudioTapPropertyFormat` says 48 kHz, but the aggregate device runs on the output device's clock and delivers at that rate. A Bluetooth headset in hands-free mode runs at 16 kHz, so the guest got labeled 3x too fast and the recognizer returned nothing. `SystemAudioCapture` labels buffers with the aggregate's nominal rate, kept current by a property listener.
-- **AAC rejects a fixed 64 kbps at 16 kHz.** The headset mic's file never opened. The m4a settings leave the bit rate to the encoder.
-- **No `NavigationSplitView`.** It lays out at its content's ideal width and overflows smaller windows, clipping both edges. The root is a plain `HStack` of columns.
+## Install
+
+You'll need macOS 26 on Apple silicon, Apple Intelligence turned on (or Ollama), and a headset.
+
+```sh
+make release   # build, sign, notarize, and install to /Applications
+make run       # or just build and open it
+```
+
+The first recording asks for **Microphone** and **System Audio Recording Only** permission. Press **⌘R** to start and stop. Settings → Sync connects it to a server.
+
+Calls are saved to `~/Documents/Recorder/`, one folder per call: `me.m4a`, `them.m4a`, `transcript.md`, `notes.md`, and `meeting.json`.
+
+## More
+
+- [docs/DEVELOPING.md](docs/DEVELOPING.md): building, the command line, a code map, and the gotchas we hit.
+- [web/README.md](web/README.md): the Cloudflare Worker, the sync API, the MCP server, and hosting your own.
