@@ -4,7 +4,8 @@ import os
 /// `miccheck [seconds] [mic-uid] [--save dir]`: opens the mic and the desktop tap the way
 /// a call does and prints, once a second, how many buffers each delivered and how loud
 /// they were. With `--save`, both streams also run through the call pipeline: the m4a
-/// files land in `dir` and the final transcript lines print as they arrive.
+/// files land in `dir`, the final transcript lines print as they arrive, and at the end
+/// it lists the "me" lines the app would drop as echoes of the guest.
 /// Run it through `open` so macOS checks Recorder's mic permission, not the terminal's:
 ///
 ///     open -W -a build/Recorder.app --args miccheck 8 --out /tmp/miccheck.txt
@@ -45,6 +46,7 @@ enum MicCheck {
         }
 
         var streams: [Speaker: StreamTranscriber] = [:]
+        let finals = OSAllocatedUnfairLock(initialState: [Utterance]())
         if let saveDir {
             do {
                 try FileManager.default.createDirectory(at: saveDir, withIntermediateDirectories: true)
@@ -55,7 +57,9 @@ enum MicCheck {
                         speaker: speaker, sessionStartHost: host,
                         fileURL: saveDir.appendingPathComponent("\(speaker.rawValue).m4a"),
                         onUpdate: { u in
-                            if u.isFinal, !u.text.isEmpty { say("[\(Clock.format(u.start))] \(u.speaker.rawValue): \(u.text)") }
+                            guard u.isFinal, !u.text.isEmpty else { return }
+                            say("[\(Clock.format(u.start))] \(u.speaker.rawValue): \(u.text)")
+                            finals.withLock { $0.append(Utterance(speaker: u.speaker, text: u.text, start: u.start, end: u.end)) }
                         },
                         onLevel: { _ in }
                     )
@@ -91,6 +95,14 @@ enum MicCheck {
         mic.stop()
         system.stop()
         for stream in streams.values { await stream.finish() }
+        if saveDir != nil {
+            var meeting = Meeting(title: "", theirName: "them", myName: "me", startedAt: Date())
+            for u in finals.withLock({ $0 }) { meeting.insert(u) }
+            let mine = meeting.utterances.filter { $0.speaker == .me }
+            let echoes = mine.filter(meeting.isEcho)
+            say("echo: \(echoes.count) of \(mine.count) mic lines would be dropped")
+            for e in echoes { say("  [\(Clock.format(e.start))] \(e.text)") }
+        }
         return 0
     }
 }

@@ -268,6 +268,9 @@ final class AppModel {
             volatile[update.speaker] = nil
             guard !update.text.isEmpty else { return }
             meeting?.insert(utterance)
+            if let echoes = meeting?.removeEchoes(near: utterance), !echoes.isEmpty {
+                Log.app.notice("Dropped \(echoes.count) echoed line(s): \(echoes.map(\.text).joined(separator: " | "))")
+            }
             scheduleSave()
         } else {
             volatile[update.speaker] = update.text.isEmpty ? nil : utterance

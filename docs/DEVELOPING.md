@@ -31,6 +31,8 @@ Settings (⌘,) holds your name, the default name for the other person, the note
 - **Your mic** follows the system default input unless you pick a device.
 - **The guest** is desktop audio by default: everything the Mac plays, like a Zoom or Meet call in your headset. Turn that off to record the guest from a second input device instead, like a second mic for someone in the room. Each device gets its own engine, so two mics record at once.
 
+**No headset?** The mic hears the speakers, so the guest's words land on your side too. Each time a line finishes, the app drops any "me" line that "them" lines cover in time and mostly repeat (60% of the words; lines of one or two words must match outright). The audio files keep everything. `miccheck --save` reports what it would drop.
+
 A device you picked that's unplugged stops the recording from starting rather than quietly recording the wrong mic. If either side sends no audio at all for four seconds, the header says so.
 
 ### Sync
@@ -79,6 +81,7 @@ open -n -W -a Recorder --args miccheck 15 --save /tmp/call --out /tmp/mic.txt   
 | Mic capture | `Audio/SystemAudioCapture.swift` (`MicCapture`) | `AVAudioEngine` tap on the default input, rebuilt on every config change. |
 | System audio | `Audio/SystemAudioCapture.swift` | Core Audio process tap (`CATapDescription`, global, excluding this app) on a private aggregate device. No Screen Recording permission. |
 | Per-stream pipeline | `Transcription/StreamTranscriber.swift` | Writes the m4a, converts to the recognizer's format, feeds `SpeechAnalyzer` + `SpeechTranscriber` with volatile results on. |
+| Echo filter | `Model/Meeting.swift` (`isEcho`, `removeEchoes`) | Uses the guest's track as the reference instead of cancelling audio. Apple's voice processing was tried and rejected: turning it on stops the system audio tap within a second. |
 | Timeline | same | Each stream records its first buffer's offset from the session start, so both sides land on one clock and sort correctly. |
 | Notes | `Notes/NotesGenerator.swift` | Streams from Ollama `/api/chat`, or from `FoundationModels`. The on-device model's context is small, so long calls are condensed in chunks first. |
 | Devices | `Audio/AudioDevices.swift` | Input devices by Core Audio UID, which survives unplugging. `MicCapture(device:)` pins an engine to one. |

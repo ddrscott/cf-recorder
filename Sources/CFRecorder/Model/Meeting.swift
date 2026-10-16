@@ -42,6 +42,49 @@ struct Meeting: Codable, Sendable {
         utterances.insert(utterance, at: index)
     }
 
+    // MARK: Echo
+
+    /// Without a headset the mic hears the speakers, so the guest's words come back as a
+    /// "me" line at the same moment. Such a line is an echo when "them" lines cover most of
+    /// its time and contain most of its words. A headset never trips this: the mic can't
+    /// hear the guest, so their words don't show up on your side.
+    func isEcho(_ u: Utterance) -> Bool {
+        guard u.speaker == .me else { return false }
+        let mine = Self.words(u.text)
+        guard !mine.isEmpty else { return false }
+        // Recognizers split phrases differently on each side, so allow some slack.
+        let slack = 1.5
+        let theirs = utterances.filter { $0.speaker == .them && $0.end + slack >= u.start && $0.start - slack <= u.end }
+        guard !theirs.isEmpty else { return false }
+
+        let span = max(u.end - u.start, 0.3)
+        let covered = theirs.reduce(0.0) { sum, t in
+            sum + max(0, min(u.end, t.end + slack) - max(u.start, t.start - slack))
+        }
+        guard covered / span >= 0.6 else { return false }
+
+        let heard = Set(theirs.flatMap { Self.words($0.text) })
+        let matched = mine.filter(heard.contains).count
+        // A short line has to match outright, since one stray word proves little.
+        let needed = mine.count <= 2 ? 1.0 : 0.6
+        return Double(matched) / Double(mine.count) >= needed
+    }
+
+    /// Drops "me" lines near `u` that echo the guest. Run after each final line from
+    /// either side, since the two recognizers finish their phrases in either order.
+    @discardableResult
+    mutating func removeEchoes(near u: Utterance) -> [Utterance] {
+        let echoes = utterances.filter { $0.speaker == .me && $0.end + 5 >= u.start && $0.start - 5 <= u.end && isEcho($0) }
+        guard !echoes.isEmpty else { return [] }
+        let ids = Set(echoes.map(\.id))
+        utterances.removeAll { ids.contains($0.id) }
+        return echoes
+    }
+
+    private static func words(_ text: String) -> [String] {
+        text.lowercased().split { !$0.isLetter && !$0.isNumber && $0 != "'" }.map(String.init)
+    }
+
     /// Plain text for the LLM and the .md file, with consecutive lines from the same
     /// speaker run together.
     func transcriptText() -> String {

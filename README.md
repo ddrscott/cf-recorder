@@ -9,7 +9,7 @@ Recorder is a Mac app that records the call from your headset, transcribes both 
 ## What it does
 
 - **Records any call, on any platform.** Your mic is one track, and everything the Mac plays is the other. No bot joins the meeting, and the host's plan doesn't matter.
-- **Works with a headset.** Bluetooth included, so you can take the call anywhere.
+- **Works with a headset.** Bluetooth included, so you can take the call anywhere. Without one, the guest's voice coming back through your mic is filtered out of the transcript.
 - **Knows who said what.** Each side has its own track and its own recognizer, so speaker labels come from the hardware, not from a model guessing voices.
 - **Transcribes on your Mac, live.** Apple's on-device speech recognition shows the call as a chat while it happens.
 - **Writes the notes.** Apple Intelligence (or Ollama) writes a summary, decisions, action items, open questions, and a title.
