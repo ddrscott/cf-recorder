@@ -58,7 +58,7 @@ make run       # or just build and open it
 
 The first recording asks for **Microphone** and **System Audio Recording Only** permission. Press **⌘R** to start and stop. Settings → Sync connects it to a server.
 
-Calls are saved to `~/Documents/Recorder/`, one folder per call: `me.m4a`, `them.m4a`, `transcript.md`, `notes.md`, and `meeting.json`.
+Calls are saved to `~/Documents/Recorder/`, one folder per call: `me.m4a`, `them.m4a`, `transcript.md`, `notes.md`, and `meeting.json`. Trashing a call, in the app or on the web, trashes it in both places, and you can restore it from either for 30 days.
 
 ## More
 

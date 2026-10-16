@@ -104,10 +104,27 @@ const ranged = await fetch(`${callUrl}/files/them.m4a`, { headers: { ...bearer, 
 assert.equal(ranged.status, 206);
 assert.equal((await ranged.arrayBuffer()).byteLength, 100);
 
-// The viewer sees the same call through the session cookie, and can't write.
+// The viewer sees the same call through the session cookie, and can't upload.
+const viewerCall = `${base}/api/calls/${encodeURIComponent(id)}`;
 const viewer = await (await fetch(`${base}/api/calls`, { headers: { Cookie: cookie } })).json();
 assert.ok(viewer.calls.some((c) => c.id === id));
-assert.equal((await fetch(`${base}/api/calls/${encodeURIComponent(id)}`, { method: "DELETE", headers: { Cookie: cookie } })).status, 403);
+assert.equal((await fetch(`${viewerCall}/files/notes.md`, { method: "PUT", headers: { Cookie: cookie }, body: "x" })).status, 403);
+
+// Trash is soft: the call leaves the list, shows in ?trash, keeps its files, and comes back.
+step("trash + restore");
+const ids = async (q = "") => (await (await fetch(`${base}/api/v1/calls${q}`, { headers: bearer })).json()).calls.map((c) => c.id);
+assert.equal((await fetch(callUrl, { method: "DELETE", headers: bearer })).status, 204);
+assert.ok(!(await ids()).includes(id));
+assert.ok((await ids("?trash=1")).includes(id));
+const trashed = await (await fetch(callUrl, { headers: bearer })).json();
+assert.ok(trashed.call.trashed_at && trashed.files.length === 2);
+assert.equal((await fetch(`${callUrl}/restore`, { method: "POST", headers: bearer })).status, 204);
+assert.ok((await ids()).includes(id));
+// The viewer can trash and restore too.
+assert.equal((await fetch(viewerCall, { method: "DELETE", headers: { Cookie: cookie } })).status, 204);
+assert.ok((await ids("?trash=1")).includes(id));
+assert.equal((await fetch(`${viewerCall}/restore`, { method: "POST", headers: { Cookie: cookie } })).status, 204);
+assert.ok((await ids()).includes(id));
 
 // 7. An AI agent over MCP: discover from /mcp, register, and authorize with no scope
 // (what MCP clients do), which grants read-only. Then call each tool.
@@ -172,6 +189,11 @@ const read = await toolText("get_call", { id });
 assert.match(read, /## Notes[\s\S]*zebra budget[\s\S]*## Transcript\n\n\[00:00\] Robot: beep/);
 const missing = await rpc("tools/call", { name: "get_call", arguments: { id: "nope" } });
 assert.equal(missing.isError, true);
+// Agents don't see the trash.
+await fetch(callUrl, { method: "DELETE", headers: bearer });
+assert.equal((await rpc("tools/call", { name: "get_call", arguments: { id } })).isError, true);
+assert.doesNotMatch(await toolText("list_calls", {}), /e2e test call/);
+await fetch(`${callUrl}/restore`, { method: "POST", headers: bearer });
 
 // The agent's read-only token can't write through the sync API, and the sync
 // client's token isn't for the MCP resource.
@@ -185,8 +207,9 @@ const refreshed = await (await fetch(asm.token_endpoint, {
   body: new URLSearchParams({ grant_type: "refresh_token", refresh_token: tokenRes.refresh_token, client_id: reg.client_id, resource: prm.resource }),
 })).json();
 assert.ok(refreshed.access_token, JSON.stringify(refreshed));
-r = await fetch(callUrl, { method: "DELETE", headers: { Authorization: `Bearer ${refreshed.access_token}` } });
+r = await fetch(`${callUrl}?forever=1`, { method: "DELETE", headers: { Authorization: `Bearer ${refreshed.access_token}` } });
 assert.equal(r.status, 204);
 assert.equal((await fetch(callUrl, { headers: { Authorization: `Bearer ${refreshed.access_token}` } })).status, 404);
+assert.ok(!(await ids("?trash=1")).includes(id));
 
 console.log("\x1b[32mok\x1b[0m");

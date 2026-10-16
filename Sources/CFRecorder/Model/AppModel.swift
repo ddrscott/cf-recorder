@@ -16,6 +16,8 @@ enum Prefs {
     static let micDevice = "micDevice"
     static let guestIsDesktop = "guestIsDesktop"
     static let guestDevice = "guestDevice"
+    /// Trash changes not yet sent to the server, call id → SyncClient.TrashAction.
+    static let pendingTrash = "pendingTrash"
 
     static func register() {
         UserDefaults.standard.register(defaults: [
@@ -53,6 +55,8 @@ final class AppModel {
     var volatile: [Speaker: Utterance] = [:]
     var levels: [Speaker: Float] = [.me: 0, .them: 0]
     var history: [MeetingSummary] = []
+    var trash: [MeetingSummary] = []
+    var showingTrash = false
     var errorMessage: String?
     var notesRunning = false
     var notesError: String?
@@ -74,13 +78,27 @@ final class AppModel {
     private var notedUtteranceCount = 0
     private var syncTask: Task<Void, Never>?
     private var syncing = false
+    private var lastFullSync = Date.distantPast
+    /// Asked once per connection; see `SyncClient.hasTrash`.
+    private var serverHasTrash: Bool?
 
     init() {
         Prefs.register()
+        _ = MeetingStore.emptyExpiredTrash()
         refreshHistory()
         select(history.first?.folder)
         // Backfill anything recorded while sync was off or the network was down.
         if syncConnected && Prefs.bool(Prefs.autoSync) { syncAll() }
+        // Coming back to the app picks up calls trashed or restored on the web.
+        NotificationCenter.default.addObserver(
+            forName: NSApplication.didBecomeActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.syncConnected, Prefs.bool(Prefs.autoSync),
+                      Date().timeIntervalSince(self.lastFullSync) > 60 else { return }
+                self.syncAll()
+            }
+        }
     }
 
     // MARK: Recording
@@ -343,14 +361,103 @@ final class AppModel {
 
     func refreshHistory() {
         history = MeetingStore.list()
+        trash = MeetingStore.listTrash()
     }
 
+    var isTrashed: Bool { folder.map(MeetingStore.isTrashed) ?? false }
+
+    // MARK: Trash
+
+    /// Moves a call to the Trash, here and on the server.
     func trash(_ folder: URL) {
         guard folder != self.folder || !isBusy else { return }
-        try? FileManager.default.trashItem(at: folder, resultingItemURL: nil)
+        do {
+            try MeetingStore.moveToTrash(folder)
+        } catch {
+            Log.app.error("Trashing \(folder.lastPathComponent) failed: \(error.localizedDescription)")
+            return
+        }
         if folder == self.folder {
             self.folder = nil
             meeting = nil
+        }
+        refreshHistory()
+        mirror(.trash, folder)
+    }
+
+    func restore(_ folder: URL) {
+        let restored: URL
+        do {
+            restored = try MeetingStore.restore(folder)
+        } catch {
+            Log.app.error("Restoring \(folder.lastPathComponent) failed: \(error.localizedDescription)")
+            return
+        }
+        if folder == self.folder { self.folder = restored }
+        refreshHistory()
+        if showingTrash && trash.isEmpty { showingTrash = false }
+        mirror(.restore, folder)
+    }
+
+    func deleteForever(_ folder: URL) {
+        guard MeetingStore.isTrashed(folder) else { return }
+        try? FileManager.default.removeItem(at: folder)
+        if folder == self.folder {
+            self.folder = nil
+            meeting = nil
+        }
+        refreshHistory()
+        mirror(.purge, folder)
+    }
+
+    func emptyTrash() {
+        for item in trash { deleteForever(item.folder) }
+    }
+
+    /// Queues the change for the server and sends it. The queue survives quitting and
+    /// going offline, and goes out before the next sync looks at the server's trash.
+    private func mirror(_ action: SyncClient.TrashAction, _ folder: URL) {
+        guard syncConnected else { return }
+        var pending = UserDefaults.standard.dictionary(forKey: Prefs.pendingTrash) as? [String: String] ?? [:]
+        pending[folder.lastPathComponent] = action.rawValue
+        UserDefaults.standard.set(pending, forKey: Prefs.pendingTrash)
+        guard Prefs.bool(Prefs.autoSync) else { return }
+        let restored = action == .restore ? [MeetingStore.library.appendingPathComponent(folder.lastPathComponent)] : []
+        Task { await runSync(restored) }
+    }
+
+    private func sendPendingTrash() async throws {
+        let pending = UserDefaults.standard.dictionary(forKey: Prefs.pendingTrash) as? [String: String] ?? [:]
+        for (id, raw) in pending {
+            if let action = SyncClient.TrashAction(rawValue: raw) {
+                try await SyncClient.apply(action, id: id)
+            }
+            // Only clear it if nothing newer was queued for this call meanwhile.
+            var now = UserDefaults.standard.dictionary(forKey: Prefs.pendingTrash) as? [String: String] ?? [:]
+            if now[id] == raw { now[id] = nil }
+            UserDefaults.standard.set(now, forKey: Prefs.pendingTrash)
+        }
+    }
+
+    /// Follows trash changes made on the server (from the web viewer): calls it trashed
+    /// move to the Trash here, and calls it restored move back. Runs after our own
+    /// pending changes went out, so the server's state is the newest word.
+    private func pullTrash() async throws {
+        let remote = try await SyncClient.remoteCalls()
+        let pending = UserDefaults.standard.dictionary(forKey: Prefs.pendingTrash) as? [String: String] ?? [:]
+        // A call that's open and busy (recording, writing notes) stays where it is for now.
+        let pinned = isBusy || notesRunning ? folder : nil
+        for item in MeetingStore.list() {
+            let id = item.folder.lastPathComponent
+            guard remote.trashed.contains(id), pending[id] == nil, item.folder != pinned,
+                  let moved = try? MeetingStore.moveToTrash(item.folder) else { continue }
+            if item.folder == folder { folder = moved }
+        }
+        for item in MeetingStore.listTrash() {
+            let id = item.folder.lastPathComponent
+            guard remote.live.contains(id), pending[id] == nil,
+                  let restored = try? MeetingStore.restore(item.folder) else { continue }
+            if item.folder == folder { folder = restored }
         }
         refreshHistory()
     }
@@ -360,7 +467,7 @@ final class AppModel {
     /// Pushes the open call after a pause. While it's recording, only the transcript goes
     /// (every 30 seconds), since the audio files are still being written.
     func syncSoon(after seconds: Double = 3) {
-        guard syncConnected, Prefs.bool(Prefs.autoSync), let folder else { return }
+        guard syncConnected, Prefs.bool(Prefs.autoSync), let folder, !MeetingStore.isTrashed(folder) else { return }
         let recording = isRecording
         syncTask?.cancel()
         syncTask = Task { [weak self] in
@@ -370,23 +477,36 @@ final class AppModel {
         }
     }
 
+    /// Sends pending trash changes, follows the server's, then pushes every call.
     func syncAll() {
-        Task { await runSync(history.map(\.folder)) }
+        lastFullSync = Date()
+        Task { await runSync([], everything: true) }
     }
 
     func syncConnectionChanged() {
         syncConnected = SyncClient.session != nil
+        serverHasTrash = nil
         syncStatus = syncConnected ? "" : "not connected"
         if syncConnected { syncAll() }
     }
 
-    private func runSync(_ folders: [URL]) async {
+    private func runSync(_ folders: [URL], everything: Bool = false) async {
         while syncing { try? await Task.sleep(for: .milliseconds(250)) }
         syncing = true
         defer { syncing = false }
         syncStatus = "syncing…"
         do {
-            for f in folders {
+            // A server without a trash would take a DELETE as "delete forever", so trash
+            // changes wait (still queued) until it has one.
+            if serverHasTrash != true { serverHasTrash = try await SyncClient.hasTrash() }
+            let hasTrash = serverHasTrash == true
+            if hasTrash { try await sendPendingTrash() }
+            var folders = folders
+            if everything {
+                if hasTrash { try await pullTrash() }
+                folders = history.map(\.folder)
+            }
+            for f in folders where !MeetingStore.isTrashed(f) && FileManager.default.fileExists(atPath: f.path) {
                 _ = try await SyncClient.sync(folder: f, skipAudio: isRecording && f == folder)
             }
             syncStatus = "synced \(Date().formatted(date: .omitted, time: .shortened))"

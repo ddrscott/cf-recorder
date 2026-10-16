@@ -80,6 +80,8 @@ struct MeetingSummary: Identifiable, Hashable {
     let title: String
     let startedAt: Date
     let duration: Double
+    /// Set for calls in the Trash.
+    var trashedAt: Date?
 }
 
 enum MeetingStore {
@@ -126,13 +128,69 @@ enum MeetingStore {
     }
 
     static func list() -> [MeetingSummary] {
+        summaries(in: library).sorted { $0.startedAt > $1.startedAt }
+    }
+
+    // MARK: Trash
+
+    /// Trashed calls wait in `<library>/Trash/` rather than the Finder's Trash, so the app
+    /// can list them, restore them, and keep them in step with the server's trash.
+    static let trash = library.appendingPathComponent("Trash", isDirectory: true)
+    static let trashDays = 30
+    /// Holds the moment a call was trashed. Hidden, so sync never uploads it.
+    private static let trashedMarker = ".trashed"
+
+    static func listTrash() -> [MeetingSummary] {
+        summaries(in: trash).sorted { ($0.trashedAt ?? .distantPast) > ($1.trashedAt ?? .distantPast) }
+    }
+
+    static func isTrashed(_ folder: URL) -> Bool {
+        folder.deletingLastPathComponent().standardizedFileURL.path == trash.standardizedFileURL.path
+    }
+
+    @discardableResult
+    static func moveToTrash(_ folder: URL) throws -> URL {
+        let fm = FileManager.default
+        try fm.createDirectory(at: trash, withIntermediateDirectories: true)
+        let target = trash.appendingPathComponent(folder.lastPathComponent, isDirectory: true)
+        if fm.fileExists(atPath: target.path) { try fm.removeItem(at: target) }
+        try fm.moveItem(at: folder, to: target)
+        try ISO8601DateFormatter().string(from: Date())
+            .write(to: target.appendingPathComponent(trashedMarker), atomically: true, encoding: .utf8)
+        return target
+    }
+
+    @discardableResult
+    static func restore(_ folder: URL) throws -> URL {
+        let fm = FileManager.default
+        let target = library.appendingPathComponent(folder.lastPathComponent, isDirectory: true)
+        guard !fm.fileExists(atPath: target.path) else {
+            throw CocoaError(.fileWriteFileExists, userInfo: [NSFilePathErrorKey: target.path])
+        }
+        try fm.moveItem(at: folder, to: target)
+        try? fm.removeItem(at: target.appendingPathComponent(trashedMarker))
+        return target
+    }
+
+    /// Deletes calls that have been in the Trash longer than `trashDays`. Returns their ids.
+    static func emptyExpiredTrash() -> [String] {
+        let cutoff = Date().addingTimeInterval(-Double(trashDays) * 86_400)
+        return listTrash().compactMap { item in
+            guard let at = item.trashedAt, at < cutoff else { return nil }
+            try? FileManager.default.removeItem(at: item.folder)
+            return item.folder.lastPathComponent
+        }
+    }
+
+    private static func summaries(in directory: URL) -> [MeetingSummary] {
         let folders = (try? FileManager.default.contentsOfDirectory(
-            at: library, includingPropertiesForKeys: nil, options: .skipsHiddenFiles
+            at: directory, includingPropertiesForKeys: nil, options: .skipsHiddenFiles
         )) ?? []
         return folders.compactMap { folder in
             guard let m = load(folder) else { return nil }
-            return MeetingSummary(folder: folder, title: m.title, startedAt: m.startedAt, duration: m.duration)
+            let marker = try? String(contentsOf: folder.appendingPathComponent(trashedMarker), encoding: .utf8)
+            return MeetingSummary(folder: folder, title: m.title, startedAt: m.startedAt, duration: m.duration,
+                                  trashedAt: marker.flatMap { ISO8601DateFormatter().date(from: $0) })
         }
-        .sorted { $0.startedAt > $1.startedAt }
     }
 }

@@ -1,4 +1,5 @@
-// Viewer for synced Recorder calls. Hash routes: #/ is the list, #/c/<id> is one call.
+// Viewer for synced Recorder calls. Hash routes: #/ is the list, #/c/<id> is one call,
+// #/trash is the trash.
 const BASE = "/recordings";
 const api = (path) => `${BASE}${path}`;
 const view = document.getElementById("view");
@@ -19,6 +20,15 @@ async function getJSON(path, init) {
   return body;
 }
 const post = (path, data) => getJSON(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
+const callPath = (id) => `/api/calls/${encodeURIComponent(id)}`;
+const trashCall = (id) => fetch(api(callPath(id)), { method: "DELETE", credentials: "same-origin" }).then(okOrThrow);
+const restoreCall = (id) => fetch(api(`${callPath(id)}/restore`), { method: "POST", credentials: "same-origin" }).then(okOrThrow);
+const purgeCall = (id) => fetch(api(`${callPath(id)}?forever=1`), { method: "DELETE", credentials: "same-origin" }).then(okOrThrow);
+async function okOrThrow(res) {
+  if (res.ok) return;
+  const body = await res.json().catch(() => null);
+  throw Object.assign(new Error(body?.error || `HTTP ${res.status}`), { status: res.status });
+}
 
 // ---- Sign in ----
 
@@ -98,11 +108,54 @@ async function renderList() {
   };
   view.innerHTML = `
     <div class="list">
-      <div class="bar"><p class="h">calls</p><input id="q" type="search" placeholder="Search calls"></div>
+      <div class="bar"><p class="h">calls</p><input id="q" type="search" placeholder="Search calls"><a class="link" href="#/trash">trash</a></div>
       <div id="calls"></div>
     </div>`;
   view.querySelector("#q").oninput = (e) => draw(e.target.value);
   draw("");
+}
+
+// ---- Trash ----
+
+const TRASH_DAYS = 30;
+
+async function renderTrash() {
+  view.innerHTML = `<div class="list"><p class="muted mono">loading…</p></div>`;
+  const { calls } = await getJSON("/api/calls?trash=1");
+  const left = (ms) => Math.max(0, Math.ceil(TRASH_DAYS - (Date.now() - ms) / 86400000));
+  view.innerHTML = `
+    <div class="list">
+      <div class="bar"><p class="h">trash</p><a class="link" href="#/">calls</a></div>
+      <p class="muted small mono">Calls here are deleted for good ${TRASH_DAYS} days after they were trashed. Restoring one here puts it back on your Mac too.</p>
+      <div id="calls">${calls.length ? calls.map((c) => `
+        <div class="call trashed" data-id="${esc(c.id)}">
+          <a class="t" href="#/c/${encodeURIComponent(c.id)}">${esc(c.title || "Untitled call")}</a>
+          <div class="m">${esc(when(c.started_at))} · ${clock(c.duration)} · with ${esc(c.their_name)} · ${left(c.trashed_at)}d left</div>
+          <div class="actions">
+            <button class="act" data-do="restore"><span class="d">$</span> restore</button>
+            <button class="act danger" data-do="purge">delete forever</button>
+          </div>
+        </div>`).join("") : `<div class="empty mono">The trash is empty.</div>`}</div>
+    </div>`;
+  view.querySelectorAll(".call.trashed").forEach((row) => row.querySelector(".actions").addEventListener("click", async (e) => {
+    const button = e.target.closest("button");
+    if (!button) return;
+    // Deleting forever takes a second click, since it can't be undone.
+    if (button.dataset.do === "purge" && !button.dataset.armed) {
+      button.dataset.armed = "1";
+      button.textContent = "click again to delete";
+      return;
+    }
+    button.disabled = true;
+    try {
+      await (button.dataset.do === "restore" ? restoreCall : purgeCall)(row.dataset.id);
+      row.remove();
+      if (!view.querySelector(".call.trashed")) view.querySelector("#calls").innerHTML = `<div class="empty mono">The trash is empty.</div>`;
+    } catch (x) {
+      button.disabled = false;
+      button.textContent = x.message;
+    }
+  }));
 }
 
 // ---- One call ----
@@ -139,13 +192,19 @@ async function renderCall(id) {
   const file = (name) => api(`/api/calls/${encodeURIComponent(id)}/files/${name}`);
   const utterances = m.utterances ?? [];
   const audible = ["me", "them"].filter((t) => has.has(`${t}.m4a`));
+  const trashed = Boolean(data.call?.trashed_at);
 
   document.body.classList.add("is-call");
   view.innerHTML = `
     <div class="callpage">
       <div class="head">
-        <h1>${esc(m.title || "Untitled call")}</h1>
-        <div class="m">${m.startedAt ? esc(when(m.startedAt)) : ""} · ${clock(m.duration)} · <span class="spk me">${esc(names.me)}</span> and <span class="spk them">${esc(names.them)}</span></div>
+        <div class="title">
+          <h1>${esc(m.title || "Untitled call")}</h1>
+          <div class="m">${trashed ? `<span class="tag">in trash</span> · ` : ""}${m.startedAt ? esc(when(m.startedAt)) : ""} · ${clock(m.duration)} · <span class="spk me">${esc(names.me)}</span> and <span class="spk them">${esc(names.them)}</span></div>
+        </div>
+        ${trashed
+          ? `<button class="act" id="restore"><span class="d">$</span> restore</button>`
+          : `<button class="act" id="trash">move to trash</button>`}
       </div>
       <div class="tabs" role="tablist">
         <button role="tab" data-pane="transcript" aria-selected="true">transcript</button>
@@ -189,6 +248,15 @@ async function renderCall(id) {
         <select id="rate" aria-label="Speed"><option value="1">1×</option><option value="1.25">1.25×</option><option value="1.5">1.5×</option><option value="2">2×</option></select>
       </footer>` : ""}
     </div>`;
+
+  const act = view.querySelector(".head .act");
+  act.onclick = () => {
+    act.disabled = true;
+    (trashed ? restoreCall : trashCall)(id).then(
+      () => (trashed ? route() : (location.hash = "#/")),
+      (x) => { act.disabled = false; act.textContent = x.message; },
+    );
+  };
 
   // Narrow screens show one pane at a time.
   const callview = view.querySelector(".callview");
@@ -468,6 +536,7 @@ async function route() {
   const m = location.hash.match(/^#\/c\/(.+)$/);
   try {
     if (m) await renderCall(decodeURIComponent(m[1]));
+    else if (location.hash === "#/trash") await renderTrash();
     else await renderList();
   } catch (x) {
     if (x.status === 401) { user = null; return start(); }

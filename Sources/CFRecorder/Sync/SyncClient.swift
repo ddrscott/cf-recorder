@@ -185,6 +185,63 @@ enum SyncClient {
         return report
     }
 
+    // MARK: Trash
+
+    enum TrashAction: String, Codable {
+        case trash, restore, purge
+    }
+
+    /// Whether the server has a trash (sync API version 2). On a version 1 server DELETE
+    /// deletes for good and `?trash=1` is ignored, so trash changes stay on this Mac.
+    static func hasTrash() async throws -> Bool {
+        let (session, _) = try await accessToken()
+        let (data, response) = try await authed(URLRequest(url: URL(string: session.server)!.appendingPathComponent("api/v1")))
+        try check(response, data, "Reading the server's version")
+        let version = (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["version"] as? Int ?? 1
+        return version >= 2
+    }
+
+    /// Mirrors a trash change on the server. Restoring a call the server already emptied
+    /// is fine: the next sync uploads it again.
+    static func apply(_ action: TrashAction, id: String) async throws {
+        let (session, _) = try await accessToken()
+        let callURL = URL(string: session.server)!.appendingPathComponent("api/v1/calls").appendingPathComponent(id)
+        var request: URLRequest
+        switch action {
+        case .trash:
+            request = URLRequest(url: callURL)
+            request.httpMethod = "DELETE"
+        case .purge:
+            var url = URLComponents(url: callURL, resolvingAgainstBaseURL: false)!
+            url.queryItems = [.init(name: "forever", value: "1")]
+            request = URLRequest(url: url.url!)
+            request.httpMethod = "DELETE"
+        case .restore:
+            request = URLRequest(url: callURL.appendingPathComponent("restore"))
+            request.httpMethod = "POST"
+        }
+        let (data, response) = try await authed(request)
+        if action == .restore, (response as? HTTPURLResponse)?.statusCode == 404 { return }
+        try check(response, data, "Updating the trash on the server")
+    }
+
+    /// The ids of the server's live and trashed calls.
+    static func remoteCalls() async throws -> (live: Set<String>, trashed: Set<String>) {
+        let (session, _) = try await accessToken()
+        let calls = URL(string: session.server)!.appendingPathComponent("api/v1/calls")
+        var trash = URLComponents(url: calls, resolvingAgainstBaseURL: false)!
+        trash.queryItems = [.init(name: "trash", value: "1")]
+        func rows(_ url: URL) async throws -> [[String: Any]] {
+            let (data, response) = try await authed(URLRequest(url: url))
+            try check(response, data, "Listing the server's calls")
+            return (try JSONSerialization.jsonObject(with: data) as? [String: Any])?["calls"] as? [[String: Any]] ?? []
+        }
+        let live = try await rows(calls).compactMap { $0["id"] as? String }
+        // Count a call as trashed only if the row says so, in case the server ignored ?trash.
+        let trashed = try await rows(trash.url!).filter { $0["trashed_at"] is NSNumber }.compactMap { $0["id"] as? String }
+        return (Set(live), Set(trashed))
+    }
+
     private static func upload(_ file: URL, to url: URL, sha256 hash: String) async throws {
         let size = (try FileManager.default.attributesOfItem(atPath: file.path)[.size] as? NSNumber)?.intValue ?? 0
         if size <= singlePutLimit {

@@ -6,6 +6,8 @@
   "main": "src/server.ts",
   "compatibility_date": "2026-09-22",
   "observability": { "enabled": true },
+  // Daily: delete calls that have sat in the trash for 30 days (purgeTrash in src/calls.ts).
+  "triggers": { "crons": ["17 9 * * *"] },
   // The last two are OAuth discovery. RFC 8414 and RFC 9728 put metadata at the domain
   // root with the issuer's or resource's path appended, so these exact paths belong to
   // this app and nothing else on askscottpierce.com (Tasks owns the bare well-known paths).

@@ -30,10 +30,13 @@ Anyone can host a server the Mac app syncs to. A client needs only the server's 
 
 | Method | Path | Scope | Does |
 |---|---|---|---|
-| GET | `/` | read | `{name, version, user, scope}` |
-| GET | `/calls` | read | Every call: `id, title, their_name, my_name, started_at, duration, lines, preview` |
-| GET | `/calls/{id}` | read | `{call, files: [{name, size, sha256, uploaded}], meeting}` |
-| DELETE | `/calls/{id}` | write | Removes the call and its files |
+| GET | `/` | read | `{name, version, user, scope}`. Version 2 added the trash; clients shouldn't send trash changes to a version 1 server, where `DELETE` deletes for good. |
+| GET | `/calls` | read | Every live call: `id, title, their_name, my_name, started_at, duration, lines, preview, trashed_at` |
+| GET | `/calls?trash=1` | read | The trashed calls instead, newest trashed first |
+| GET | `/calls/{id}` | read | `{call, files: [{name, size, sha256, uploaded}], meeting}`; `call.trashed_at` is set for a trashed call |
+| DELETE | `/calls/{id}` | write | Moves the call to the trash; its files stay |
+| DELETE | `/calls/{id}?forever=1` | write | Deletes the call and its files now |
+| POST | `/calls/{id}/restore` | write | Takes the call out of the trash (`404` once it's been emptied) |
 | GET | `/calls/{id}/files/{name}` | read | The file; honors `Range` |
 | PUT | `/calls/{id}/files/{name}` | write | Upload up to 95 MB. Send `X-Content-SHA256: <hex>` and the server checks the body against it. |
 | POST | `/calls/{id}/files/{name}/uploads` | write | Start a multipart upload for bigger files → `{uploadId}`. Send `X-Content-SHA256` for the whole file. |
@@ -41,6 +44,8 @@ Anyone can host a server the Mac app syncs to. A client needs only the server's 
 | POST | `/calls/{id}/files/{name}/uploads/{uploadId}` | write | `{"parts": [...]}` finishes it |
 
 `{id}` is the Mac app's folder name (`2026-10-15 140312`). `{name}` is one of `meeting.json`, `transcript.md`, `notes.md`, `me.m4a`, `them.m4a`. Uploading `meeting.json` updates the call list, so clients send it last. Clients skip any file whose SHA-256 matches the one the server reports.
+
+**Trash.** Trashing is soft: the call's D1 row gets a `trashed_at` (ms since epoch), its files stay in R2, and it drops out of `/calls`, the viewer's list, and MCP. A daily cron (`purgeTrash` in `src/calls.ts`) deletes calls that have been in the trash 30 days. Uploading to a trashed call leaves it trashed. The signed-in viewer can trash, restore, and delete forever too, but never upload. The Mac app sends its own trash changes first, then reads both lists and follows whatever changed on the server, so a call trashed or restored on either side ends up the same on both.
 
 ## // MCP
 
@@ -72,13 +77,15 @@ npm test          # full OAuth + sync + MCP round trip against the dev server
 
 `npm run dev` passes `--host localhost:8787`. Without it, wrangler dev rewrites the host to the route's zone, the issuer becomes `http://askscottpierce.com/recordings`, and the OAuth library rightly refuses plain http off loopback.
 
+Port 8787 taken? `npx wrangler dev --port 8797 --host localhost:8797`, then `node test/e2e.mjs http://localhost:8797/recordings`. Add `--test-scheduled` and hit `/__scheduled` to run the trash purge by hand.
+
 `.dev.vars` sets `DEV_LOGIN_CODES=1`, which shows sign-in codes on screen instead of emailing them. `test/e2e.mjs` takes a base URL, so it also works against another deployment that has dev codes on.
 
 ## Deploy
 
 ```sh
 npx wrangler secret put ALLOWED_EMAILS   # once: who may sign in
-npm run deploy                           # remote D1 migrations, then wrangler deploy
+npm run deploy                           # remote D1 migrations, then wrangler deploy (and its daily cron)
 ```
 
 To host your own, create the D1 database, R2 bucket, and KV namespace (`wrangler d1 create`, `r2 bucket create`, `kv namespace create`), put their ids and your own routes and `EMAIL_FROM` in `wrangler.jsonc`, and point the Mac app at your URL in Settings → Sync.

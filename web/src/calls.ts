@@ -1,10 +1,18 @@
 // The calls themselves: files in R2 under calls/<id>/<name>, plus a D1 row per call
 // rebuilt from its meeting.json. Both the OAuth sync API (/api/v1) and the signed-in
-// viewer (/api) route here; only the sync API may write.
+// viewer (/api) route here. Only the sync API may upload; either may trash and restore.
+//
+// Trashing is soft: the row gets a trashed_at and the files stay put, so a call can come
+// back. Lists, the viewer, and MCP leave trashed calls out, and purgeTrash() deletes them
+// for good after TRASH_DAYS.
 
 const FILES = new Set(["meeting.json", "transcript.md", "notes.md", "me.m4a", "them.m4a"]);
 // Workers cap a request body at 100 MB, so anything bigger goes up in parts.
 const MAX_SINGLE_PUT = 95 * 1024 * 1024;
+export const TRASH_DAYS = 30;
+
+/** What a caller may do: read, also trash/restore/purge calls, or also upload. */
+export type Access = "read" | "trash" | "write";
 
 const json = (body: unknown, status = 200) => Response.json(body, { status });
 export const error = (status: number, message: string) => json({ error: message }, status);
@@ -59,9 +67,11 @@ async function index(env: Env, id: string, meeting: Meeting): Promise<void> {
   ).run();
 }
 
-async function listCalls(env: Env): Promise<Response> {
+/** The live calls, or with ?trash=1 the trashed ones. */
+async function listCalls(env: Env, trash: boolean): Promise<Response> {
   const { results } = await env.DB.prepare(
-    "SELECT id, title, their_name, my_name, started_at, duration, lines, preview FROM calls ORDER BY started_at DESC",
+    `SELECT id, title, their_name, my_name, started_at, duration, lines, preview, trashed_at FROM calls
+     WHERE trashed_at IS ${trash ? "NOT NULL" : "NULL"} ORDER BY ${trash ? "trashed_at" : "started_at"} DESC`,
   ).all();
   return json({ calls: results });
 }
@@ -74,11 +84,33 @@ async function getCall(env: Env, id: string): Promise<Response> {
   return json({ id, call: row, files, meeting: meeting ? await meeting.json() : null });
 }
 
-async function deleteCall(env: Env, id: string): Promise<Response> {
+async function purgeCall(env: Env, id: string): Promise<void> {
   const files = await listFiles(env, id);
   if (files.length) await env.FILES.delete(files.map((f) => key(id, f.name)));
   await env.DB.prepare("DELETE FROM calls WHERE id = ?").bind(id).run();
+}
+
+/** DELETE moves a call to the trash; DELETE ?forever=1 deletes it and its files now. */
+async function deleteCall(env: Env, id: string, forever: boolean): Promise<Response> {
+  const row = await env.DB.prepare("SELECT trashed_at FROM calls WHERE id = ?").bind(id).first();
+  // Files without a row never got their meeting.json, so there's nothing to show in the trash.
+  if (forever || !row) await purgeCall(env, id);
+  else await env.DB.prepare("UPDATE calls SET trashed_at = ? WHERE id = ? AND trashed_at IS NULL").bind(Date.now(), id).run();
   return new Response(null, { status: 204 });
+}
+
+async function restoreCall(env: Env, id: string): Promise<Response> {
+  const done = await env.DB.prepare("UPDATE calls SET trashed_at = NULL WHERE id = ?").bind(id).run();
+  if (!done.meta.changes) return error(404, "No call with that id.");
+  return new Response(null, { status: 204 });
+}
+
+/** Run daily from the cron trigger: empties calls that have been in the trash TRASH_DAYS. */
+export async function purgeTrash(env: Env): Promise<number> {
+  const cutoff = Date.now() - TRASH_DAYS * 24 * 60 * 60 * 1000;
+  const { results } = await env.DB.prepare("SELECT id FROM calls WHERE trashed_at < ?").bind(cutoff).all<{ id: string }>();
+  for (const { id } of results) await purgeCall(env, id);
+  return results.length;
 }
 
 /** Streams a file, honoring Range so audio can seek. */
@@ -177,23 +209,30 @@ async function multipart(req: Request, env: Env, id: string, name: string, rest:
 }
 
 /**
- * Routes `/calls…` (the part after /api or /api/v1). `canWrite` is true only for a token
- * that carries the recordings:write scope.
+ * Routes `/calls…` (the part after /api or /api/v1). `access` is "write" only for a token
+ * that carries the recordings:write scope; the signed-in viewer gets "trash".
  */
-export async function handleCalls(req: Request, env: Env, path: string, canWrite: boolean): Promise<Response> {
+export async function handleCalls(req: Request, env: Env, path: string, access: Access): Promise<Response> {
   const parts = path.split("/").filter(Boolean); // ["calls", id, "files", name, "uploads", …]
   if (parts[0] !== "calls") return error(404, "Not found.");
   const write = req.method !== "GET" && req.method !== "HEAD";
-  if (write && !canWrite) return error(403, "This needs the recordings:write scope.");
+  const trashing = (parts.length === 2 && req.method === "DELETE") || (parts.length === 3 && parts[2] === "restore");
+  if (write && access === "read") return error(403, "This needs the recordings:write scope.");
+  if (write && access === "trash" && !trashing) return error(403, "Only the sync API can upload.");
 
-  if (parts.length === 1) return req.method === "GET" ? listCalls(env) : error(405, "Use GET.");
+  if (parts.length === 1) {
+    return req.method === "GET" ? listCalls(env, new URL(req.url).searchParams.has("trash")) : error(405, "Use GET.");
+  }
   const id = callId(parts[1]);
   if (!id) return error(400, "That isn't a valid call id.");
 
   if (parts.length === 2) {
     if (req.method === "GET") return getCall(env, id);
-    if (req.method === "DELETE") return deleteCall(env, id);
+    if (req.method === "DELETE") return deleteCall(env, id, new URL(req.url).searchParams.has("forever"));
     return error(405, "Use GET or DELETE.");
+  }
+  if (parts.length === 3 && parts[2] === "restore") {
+    return req.method === "POST" ? restoreCall(env, id) : error(405, "Use POST.");
   }
   if (parts[2] !== "files" || parts.length < 4) return error(404, "Not found.");
   const name = decodeURIComponent(parts[3]);

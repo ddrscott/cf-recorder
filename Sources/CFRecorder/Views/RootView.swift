@@ -75,19 +75,62 @@ struct RecordButton: View {
 
 struct Sidebar: View {
     @Environment(AppModel.self) private var model
+    @State private var confirmEmpty = false
 
     var body: some View {
+        @Bindable var model = model
         VStack(alignment: .leading, spacing: 0) {
-            SectionHeader(title: "Calls")
-                .padding(.horizontal, 16).padding(.vertical, 10)
+            HStack {
+                SectionHeader(title: model.showingTrash ? "Trash" : "Calls")
+                Spacer()
+                Button {
+                    model.showingTrash.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: model.showingTrash ? "arrow.uturn.backward" : "trash")
+                        if !model.showingTrash && !model.trash.isEmpty {
+                            Text("\(model.trash.count)").font(Theme.mono(10))
+                        }
+                    }
+                    .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .help(model.showingTrash ? "Back to calls" : "Show the Trash")
+            }
+            .padding(.horizontal, 16).padding(.vertical, 10)
             Divider()
             ScrollView {
                 LazyVStack(alignment: .leading, spacing: 2) {
-                    ForEach(model.history) { item in
-                        row(item)
+                    if model.showingTrash {
+                        Text("Calls here are deleted for good \(MeetingStore.trashDays) days after you trash them. Restoring one puts it back on the web too.")
+                            .font(.system(size: 11)).foregroundStyle(.secondary)
+                            .padding(.horizontal, 10).padding(.vertical, 6)
+                        if model.trash.isEmpty {
+                            Text("The Trash is empty.").font(Theme.mono(11)).foregroundStyle(.secondary)
+                                .padding(.horizontal, 10).padding(.vertical, 6)
+                        }
+                        ForEach(model.trash) { item in
+                            row(item)
+                        }
+                    } else {
+                        ForEach(model.history) { item in
+                            row(item)
+                        }
                     }
                 }
                 .padding(8)
+            }
+            if model.showingTrash && !model.trash.isEmpty {
+                Divider()
+                Button("Empty Trash…") { confirmEmpty = true }
+                    .buttonStyle(.borderless).font(Theme.mono(11))
+                    .padding(.horizontal, 16).padding(.vertical, 8)
+                    .confirmationDialog("Delete \(model.trash.count) call\(model.trash.count == 1 ? "" : "s") for good?",
+                                        isPresented: $confirmEmpty) {
+                        Button("Delete Forever", role: .destructive) { model.emptyTrash() }
+                    } message: {
+                        Text("They're deleted from this Mac and the server, and can't be restored.")
+                    }
             }
             if model.syncConnected {
                 Divider()
@@ -131,8 +174,13 @@ struct Sidebar: View {
             Button("Show in Finder") {
                 NSWorkspace.shared.activateFileViewerSelecting([item.folder])
             }
-            Button("Move to Trash", role: .destructive) { model.trash(item.folder) }
-                .disabled(model.isBusy && selected)
+            if item.trashedAt != nil || MeetingStore.isTrashed(item.folder) {
+                Button("Restore") { model.restore(item.folder) }
+                Button("Delete Forever", role: .destructive) { model.deleteForever(item.folder) }
+            } else {
+                Button("Move to Trash", role: .destructive) { model.trash(item.folder) }
+                    .disabled(model.isBusy && selected)
+            }
         }
     }
 }
@@ -146,6 +194,29 @@ struct MeetingView: View {
             if let meeting = model.meeting {
                 header(meeting)
                 Divider()
+            }
+            if model.isTrashed, let folder = model.folder {
+                HStack(spacing: 8) {
+                    Text("//").font(Theme.mono(12, weight: .bold)).foregroundStyle(Theme.orange)
+                    Text("IN_TRASH").font(Theme.mono(11, weight: .semibold))
+                    Text("Deleted for good \(MeetingStore.trashDays) days after it was trashed.")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        model.restore(folder)
+                    } label: {
+                        HStack(spacing: 5) {
+                            Text("$").foregroundStyle(Theme.orange)
+                            Text("restore")
+                        }
+                        .font(Theme.mono(11, weight: .semibold))
+                        .padding(.horizontal, 10).padding(.vertical, 4)
+                        .overlay(Rectangle().strokeBorder(Theme.orange, lineWidth: 1.5))
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 16).padding(.vertical, 8)
+                .overlay(Rectangle().frame(height: 1).foregroundStyle(Theme.orange.opacity(0.5)), alignment: .bottom)
             }
             if let warning = model.captureWarning {
                 HStack(spacing: 8) {

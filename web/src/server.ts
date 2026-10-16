@@ -1,7 +1,7 @@
 // askscottpierce.com/recordings: the web side of Recorder.
 //
 //   /recordings/                 viewer (static files in public/recordings)
-//   /recordings/api/…            viewer API, signed-in session cookie, read-only
+//   /recordings/api/…            viewer API, signed-in session cookie, read plus trash/restore
 //   /recordings/api/v1/…         sync API, OAuth bearer token (README // SYNC_API)
 //   /recordings/mcp              MCP server for AI agents, OAuth bearer token, read-only
 //   /recordings/oauth/…          authorize (ours), token, register, revoke (the provider's)
@@ -12,7 +12,7 @@
 
 import { OAuthAuthorizationServer, OAuthResourceServer, type OAuthResourceContext } from "@cloudflare/workers-oauth-provider";
 import { currentUser, handleAuth } from "./auth";
-import { error, handleCalls } from "./calls";
+import { error, handleCalls, purgeTrash } from "./calls";
 import { handleMcp } from "./mcp";
 import { AUTHORIZE_PATH, handleAuthorize } from "./oauth";
 
@@ -56,10 +56,10 @@ function oauthFor(origin: string): OAuth {
       fetch(req: Request, env: Env, ctx: OAuthResourceContext<Props>) {
         const sub = new URL(req.url).pathname.slice(API_V1.length);
         if (sub === "" || sub === "/") {
-          return Response.json({ name: "cf-recorder-sync", version: 1, user: ctx.props.email, scope: ctx.auth.scope });
+          return Response.json({ name: "cf-recorder-sync", version: 2, user: ctx.props.email, scope: ctx.auth.scope });
         }
         if (!ctx.auth.scope.includes("recordings:read")) return error(403, "This needs the recordings:read scope.");
-        return handleCalls(req, env, sub, ctx.auth.scope.includes("recordings:write"));
+        return handleCalls(req, env, sub, ctx.auth.scope.includes("recordings:write") ? "write" : "read");
       },
     },
   });
@@ -80,7 +80,7 @@ async function app(req: Request, env: Env, sub: string): Promise<Response> {
     const auth = await handleAuth(req, env, sub);
     if (auth) return auth;
     if (!(await currentUser(req, env))) return error(401, "Sign in first.");
-    return handleCalls(req, env, sub.slice("/api".length), false);
+    return handleCalls(req, env, sub.slice("/api".length), "trash");
   }
   // /recordings → /recordings/ so relative asset paths resolve.
   if (sub === "") return Response.redirect(new URL(`${BASE}/`, req.url).toString(), 301);
@@ -102,5 +102,10 @@ export default {
     if (path === MCP) return mcp.fetch(req, env, ctx);
     if (path !== BASE && !path.startsWith(`${BASE}/`)) return new Response("Not found", { status: 404 });
     return app(req, env, path.slice(BASE.length));
+  },
+
+  async scheduled(_event, env) {
+    const purged = await purgeTrash(env);
+    if (purged) console.log(`Emptied ${purged} call(s) from the trash.`);
   },
 } satisfies ExportedHandler<Env>;

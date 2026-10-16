@@ -21,6 +21,7 @@ On the first recording macOS asks for two permissions: **Microphone** and **Syst
 - **⌘R** starts and stops a recording, from the window or the menu bar icon.
 - Live, unfinished text shows as a dashed bubble with an orange `$`; it firms up when the recognizer finalizes the phrase.
 - Type a title and the other person's name in the header. Both are saved with the call. Each time notes are written, the call gets a short title from them, unless you've typed your own.
+- **Move to Trash** (right-click a call) puts it in `~/Documents/Recorder/Trash/`, not the Finder's Trash. The trash icon at the top of the call list shows it, with Restore, Delete Forever, and Empty Trash. Calls there are deleted after 30 days.
 - Notes refresh about every 90 seconds during the call and once more when you stop. Click a checkbox to tick off an action item; the change saves to `notes.md`.
 
 Settings (⌘,) holds your name, the default name for the other person, the notes engine, the Ollama host and model, audio devices, and sync.
@@ -34,13 +35,14 @@ A device you picked that's unplugged stops the recording from starting rather th
 
 ### Sync
 
-Settings → Sync → Connect opens your browser to sign in and approve Recorder; the tokens stay in the Keychain. After that each call syncs a few seconds after it changes, the transcript syncs every 30 seconds during a call (audio goes up once you stop), and launching the app backfills anything missed. Only files whose SHA-256 differs from the server's copy are sent. The API is in `web/README.md` under `// SYNC_API`.
+Settings → Sync → Connect opens your browser to sign in and approve Recorder; the tokens stay in the Keychain. After that each call syncs a few seconds after it changes, the transcript syncs every 30 seconds during a call (audio goes up once you stop), and launching the app backfills anything missed. Trash follows the server both ways: trashing, restoring, or deleting forever here goes up right away (queued in `UserDefaults` under `pendingTrash` if you're offline), and launching the app or switching back to it (at most once a minute) picks up calls trashed or restored in the web viewer. A call that's recording or writing notes waits until it's done. Only files whose SHA-256 differs from the server's copy are sent. The API is in `web/README.md` under `// SYNC_API`.
 
 ## Where calls go
 
 Each call gets a folder in `~/Documents/Recorder/`:
 
 ```
+Trash/            trashed calls, kept 30 days
 2026-10-15 140312/
   me.m4a           your mic, AAC
   them.m4a         system audio, AAC
@@ -82,6 +84,7 @@ open -n -W -a Recorder --args miccheck 15 --save /tmp/call --out /tmp/mic.txt   
 | Devices | `Audio/AudioDevices.swift` | Input devices by Core Audio UID, which survives unplugging. `MicCapture(device:)` pins an engine to one. |
 | Sync | `Sync/SyncClient.swift` | OAuth discovery, dynamic registration, PKCE with a loopback listener, Keychain, hash-skipping and multipart uploads. |
 | State | `Model/AppModel.swift` | Orchestrates start/stop, live notes, autosave. Updates hop to main via `DispatchQueue.main` to keep volatile/final ordering intact. |
+| Trash | `Model/Meeting.swift` (`MeetingStore`), `Model/AppModel.swift` | Folders move to `Trash/` with a hidden `.trashed` timestamp. `runSync` sends `pendingTrash`, then `pullTrash` mirrors the server's lists. |
 
 ## Icon
 

@@ -97,13 +97,30 @@ button.btn.primary { background: var(--accent); border-color: var(--accent); col
 .call .m { font: 12px var(--mono); color: var(--muted); margin-top: 2px; }
 .call .p { color: var(--muted); font-size: 14px; margin-top: 6px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .empty { border: 1px dashed var(--line); padding: 28px; color: var(--muted); }
+.list .link { font: 600 12px var(--mono); color: var(--muted); text-decoration: none; }
+.list .link:hover { color: var(--accent); }
+.list > .muted { margin: 0 0 14px; }
+.call.trashed .t { display: block; color: inherit; text-decoration: none; }
+.call.trashed .t:hover { color: var(--accent); }
+.call .actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.act {
+  all: unset; cursor: pointer; font: 600 12px var(--mono); padding: 4px 10px; border: 1.5px solid var(--line); color: var(--ink); white-space: nowrap;
+}
+.act:hover { border-color: var(--accent); }
+.act .d { color: var(--accent); }
+.act.danger { color: var(--accent); }
+.act[data-armed] { border-color: var(--accent); background: var(--accent-soft); }
+.act:disabled { opacity: 0.5; cursor: default; }
+.act:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.tag { font: 600 11px var(--mono); color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; }
 
 /* One call: header, two panes that scroll on their own, and the player docked at the bottom.
    The page itself never scrolls, so following playback moves only the transcript. */
 body.is-call { height: 100vh; height: 100dvh; min-height: 0; overflow: hidden; display: flex; flex-direction: column; }
 body.is-call #view { flex: 1; min-height: 0; display: flex; flex-direction: column; }
 .callpage { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.head { flex: none; padding: 14px 20px; border-bottom: 1px solid var(--line); }
+.head { flex: none; padding: 14px 20px; border-bottom: 1px solid var(--line); display: flex; align-items: flex-start; gap: 16px; }
+.head .title { flex: 1; min-width: 0; }
 .head h1 { margin: 0; font-size: 20px; line-height: 1.3; }
 .head .m { font: 12px var(--mono); color: var(--muted); margin-top: 3px; }
 .spk.me { color: var(--me); }

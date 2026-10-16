@@ -89,7 +89,7 @@ const describe = (c: CallRow) =>
 
 async function calls(env: Env, limit: number): Promise<CallRow[]> {
   const { results } = await env.DB.prepare(
-    "SELECT id, title, their_name, my_name, started_at, duration, lines FROM calls ORDER BY started_at DESC LIMIT ?",
+    "SELECT id, title, their_name, my_name, started_at, duration, lines FROM calls WHERE trashed_at IS NULL ORDER BY started_at DESC LIMIT ?",
   ).bind(limit).all<CallRow>();
   return results;
 }
@@ -130,7 +130,7 @@ async function getCall(env: Env, args: Json): Promise<string> {
   const id = String(args.id ?? "").trim();
   const include = String(args.include ?? "both");
   const row = await env.DB.prepare(
-    "SELECT id, title, their_name, my_name, started_at, duration, lines FROM calls WHERE id = ?",
+    "SELECT id, title, their_name, my_name, started_at, duration, lines FROM calls WHERE id = ? AND trashed_at IS NULL",
   ).bind(id).first<CallRow>();
   if (!row) throw new ToolError(`No call with id "${id}". list_calls or search_calls give the ids.`);
 
